@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+venv/
+.env
+data/
+uploads/
+*.db
+.claude/
+node_modules/
+server/
+src/
+package.json
+package-lock.json
+vite.config.js
+/index.html
