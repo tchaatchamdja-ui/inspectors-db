@@ -82,10 +82,10 @@ def _q(sql):
     if USE_POSTGRES:
         sql = sql.replace('?', '%s')
         sql = sql.replace("datetime('now')", 'CURRENT_TIMESTAMP')
-        # GROUP_CONCAT(DISTINCT x) → STRING_AGG(DISTINCT x, ', ')
+        # GROUP_CONCAT → STRING_AGG (handle nested parentheses like COALESCE)
         import re
-        sql = re.sub(r'GROUP_CONCAT\(DISTINCT\s+(.+?)\)', r"STRING_AGG(DISTINCT \1, ', ')", sql)
-        sql = re.sub(r'GROUP_CONCAT\((.+?)\)', r"STRING_AGG(\1, ', ')", sql)
+        sql = re.sub(r'GROUP_CONCAT\(DISTINCT\s+((?:[^()]*|\([^()]*\))*)\)', r"STRING_AGG(DISTINCT (\1)::text, ', ')", sql)
+        sql = re.sub(r'GROUP_CONCAT\(((?:[^()]*|\([^()]*\))*)\)', r"STRING_AGG((\1)::text, ', ')", sql)
         # || works in both SQLite and PostgreSQL, no change needed
     return sql
 
@@ -1373,9 +1373,12 @@ def update_username(id):
     try:
         db.execute("UPDATE users SET username = ?, updated_at = datetime('now') WHERE id = ?", (username, id))
         db.commit()
-    except sqlite3.IntegrityError:
+    except Exception as e:
+        if 'UNIQUE' in str(e).upper() or 'unique' in str(e).lower() or 'duplicate' in str(e).lower():
+            db.close()
+            return jsonify({'error': "Ce nom d'utilisateur existe déjà"}), 400
         db.close()
-        return jsonify({'error': "Ce nom d'utilisateur existe déjà"}), 400
+        return jsonify({'error': str(e)}), 500
     log_activity(db, request.user['id'], 'CHANGE_USERNAME', f"Username #{id}: {username}")
     db.commit()
     db.close()
