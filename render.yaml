@@ -1,21 +1,11 @@
-databases:
-  - name: inspectors-db
-    plan: free
-    databaseName: inspectors
-    user: inspectors_user
-
 services:
   - type: web
     name: inspectors-app
     plan: free
     runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT
     envVars:
-      - key: DATABASE_URL
-        fromDatabase:
-          name: inspectors-db
-          property: connectionString
       - key: JWT_SECRET
         generateValue: true
       - key: PYTHON_VERSION
