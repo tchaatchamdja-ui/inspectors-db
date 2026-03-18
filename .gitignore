@@ -13,3 +13,9 @@ package.json
 package-lock.json
 vite.config.js
 /index.html
+
+# wrangler files
+.wrangler
+.dev.vars*
+!.dev.vars.example
+!.env.example
