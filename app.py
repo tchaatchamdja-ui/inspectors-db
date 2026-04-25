@@ -31,9 +31,18 @@ JWT_EXP_MINUTES = 20
 if USE_POSTGRES:
     import psycopg2
     import psycopg2.extras
+    from psycopg2.pool import ThreadedConnectionPool
     # Render uses postgres:// but psycopg2 needs postgresql://
     if DATABASE_URL.startswith('postgres://'):
         DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
+
+_pg_pool = None
+
+def get_pg_pool():
+    global _pg_pool
+    if _pg_pool is None:
+        _pg_pool = ThreadedConnectionPool(2, 10, DATABASE_URL)
+    return _pg_pool
 
 # SMTP Configuration for email sending
 SMTP_HOST = os.environ.get('SMTP_HOST', 'smtp.office365.com')
@@ -96,20 +105,30 @@ class PgRowWrapper(dict):
 
 class PgCursorWrapper:
     """Wrap psycopg2 cursor to match sqlite3 API"""
-    def __init__(self, conn):
+    def __init__(self, conn, pool=None):
         self._conn = conn
+        self._pool = pool
         self._cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        self._last_insert_id = None
 
     def execute(self, sql, params=None):
         converted = _q(sql)
         # Auto-add RETURNING id for INSERT statements to support lastrowid
         if converted.strip().upper().startswith('INSERT') and 'RETURNING' not in converted.upper():
             converted += ' RETURNING id'
-        self._cursor.execute(converted, params or ())
+            self._cursor.execute(converted, params or ())
+            row = self._cursor.fetchone()
+            self._last_insert_id = row['id'] if row else None
+        else:
+            self._cursor.execute(converted, params or ())
+            self._last_insert_id = None
         return self
 
     def executescript(self, sql):
-        self._cursor.execute(sql)
+        """Execute multiple SQL statements separated by semicolons."""
+        statements = [s.strip() for s in sql.split(';') if s.strip()]
+        for stmt in statements:
+            self._cursor.execute(stmt)
         return self
 
     def fetchone(self):
@@ -127,20 +146,20 @@ class PgCursorWrapper:
 
     def close(self):
         self._cursor.close()
-        self._conn.close()
+        if self._pool:
+            self._pool.putconn(self._conn)
+        else:
+            self._conn.close()
 
     @property
     def lastrowid(self):
-        try:
-            row = self._cursor.fetchone()
-            return row['id'] if row else None
-        except Exception:
-            return None
+        return self._last_insert_id
 
 def get_db():
     if USE_POSTGRES:
-        conn = psycopg2.connect(DATABASE_URL)
-        return PgCursorWrapper(conn)
+        pool = get_pg_pool()
+        conn = pool.getconn()
+        return PgCursorWrapper(conn, pool)
     else:
         db = sqlite3.connect(DB_PATH, timeout=10)
         db.row_factory = sqlite3.Row

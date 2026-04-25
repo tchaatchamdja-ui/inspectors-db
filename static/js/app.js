@@ -170,7 +170,7 @@ function initLogin() {
       state.token = data.token; state.user = data.user;
       localStorage.setItem('token', data.token); localStorage.setItem('user', JSON.stringify(data.user));
       await refreshSettingsConstants();
-      resetInactivity(); navigate('inspectors');
+      resetInactivity(); navigate(data.user?.role === 'National 2' ? 'inspectors' : 'analytics');
     } catch (err) { errDiv.innerHTML = `<div class="alert alert-error">${err.message}</div>`; }
     finally { btn.disabled = false; btn.textContent = 'Se connecter'; }
   });
@@ -219,7 +219,7 @@ function initChangePassword() {
       const data = await api('/auth/change-password', { method: 'POST', body: JSON.stringify({ newPassword: newPw }) });
       state.token = data.token; state.user.mustChangePassword = false;
       localStorage.setItem('token', data.token); localStorage.setItem('user', JSON.stringify(state.user));
-      navigate('inspectors');
+      navigate(state.user?.role === 'National 2' ? 'inspectors' : 'analytics');
     } catch (err) { errDiv.innerHTML = `<div class="alert alert-error">${err.message}</div>`; }
   });
 }
@@ -236,18 +236,18 @@ function renderHeader() {
         <span class="app-title">Base de donn\u00e9es des Inspecteurs et formateurs</span>
       </div>
       <nav class="nav">
+        ${canAnalytics ? `<button class="nav-btn ${state.page === 'analytics' ? 'active' : ''}" onclick="navigate('analytics')">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg>
+          Tableau de bord
+        </button>` : ''}
         <button class="nav-btn ${state.page === 'inspectors' ? 'active' : ''}" onclick="navigate('inspectors')">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-          Gestion des inspecteurs
+          Inspecteurs
         </button>
         <button class="nav-btn ${state.page === 'formateurs' ? 'active' : ''}" onclick="navigate('formateurs')">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-          Gestion des formateurs
+          Formateurs
         </button>
-        ${canAnalytics ? `<button class="nav-btn ${state.page === 'analytics' ? 'active' : ''}" onclick="navigate('analytics')">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg>
-          Analyse
-        </button>` : ''}
         ${isAdmin || state.user?.role === 'R\u00e9gional' ? `<button class="nav-btn ${state.page === 'settings' ? 'active' : ''}" onclick="navigate('settings')">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
           Param\u00e8tres
@@ -279,17 +279,6 @@ function renderHeader() {
 }
 
 function initHeader() {}
-
-function renderThemeSelector() {
-  return `
-  <div class="theme-selector">
-    <button class="theme-dot theme-blue-dark ${state.theme === 'blue-dark' ? 'active' : ''}" data-theme="blue-dark" onclick="setTheme('blue-dark')" title="Bleu fonc\u00e9"></button>
-    <button class="theme-dot theme-blue-sky ${state.theme === 'blue-sky' ? 'active' : ''}" data-theme="blue-sky" onclick="setTheme('blue-sky')" title="Bleu ciel"></button>
-    <button class="theme-dot theme-violet ${state.theme === 'violet' ? 'active' : ''}" data-theme="violet" onclick="setTheme('violet')" title="Violet"></button>
-    <button class="theme-dot theme-green ${state.theme === 'green' ? 'active' : ''}" data-theme="green" onclick="setTheme('green')" title="Vert"></button>
-    <button class="theme-dot theme-grey ${state.theme === 'grey' ? 'active' : ''}" data-theme="grey" onclick="setTheme('grey')" title="Gris"></button>
-  </div>`;
-}
 
 // ===== INSPECTORS PAGE =====
 let inspectorsData = { inspectors: [], total: 0 };
@@ -338,29 +327,21 @@ function renderInspectorsContent() {
         ${inspectorsStats.byState.map(s => `<div class="stat-card" onclick="filterByState('${s.etat.replace(/'/g, "\\'")}')" style="cursor:pointer${inspFilters.etat === s.etat ? ';border-color:var(--primary)' : ''}"><div class="stat-number">${s.count}</div><div class="stat-label">${s.etat}</div></div>`).join('')}
       </div>
     </div>
-    <div class="dashboard-section">
+    <div class="dashboard-section dashboard-domaine-full">
       <h3 class="dashboard-title"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg> Situation par Domaine</h3>
-      <div class="dashboard">
+      <div class="dashboard dashboard-flex">
         ${(inspectorsStats.byDomain || []).map(d => `<div class="stat-card stat-domain" onclick="applyFilter('domaine','${d.domaine}')" style="cursor:pointer${inspFilters.domaine === d.domaine ? ';border-color:var(--primary)' : ''}" title="${DOMAINE_LABELS[d.domaine] || d.domaine}"><div class="stat-number" style="color:${DOMAINE_COLORS[d.domaine] || 'var(--primary)'}">${d.count}</div><div class="stat-label">${d.domaine}</div></div>`).join('')}
       </div>
     </div>
-    <div class="dashboard-section">
-      <h3 class="dashboard-title"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> Situation par Niveau de Qualification</h3>
-      <div class="dashboard">
-        ${(inspectorsStats.byLevel || []).map(l => `<div class="stat-card" onclick="applyFilter('niveau','${l.niveau.replace(/'/g, "\\'")}')" style="cursor:pointer${inspFilters.niveau === l.niveau ? ';border-color:var(--primary)' : ''}"><div class="stat-number">${l.count}</div><div class="stat-label">${l.niveau}</div></div>`).join('')}
-      </div>
-    </div>
-    <div class="filters-bar">
-      <div class="filters-row">
-        <div class="filter-group"><label>\u00c9tat</label><select id="f-etat" onchange="applyFilter('etat', this.value)"><option value="">Tous les \u00c9tats</option>${ETATS.map(e => `<option value="${e}" ${inspFilters.etat === e ? 'selected' : ''}>${e}</option>`).join('')}</select></div>
-        <div class="filter-group"><label>Domaine</label><select id="f-domaine" onchange="applyFilter('domaine', this.value)"><option value="">Tous</option>${DOMAINES.map(d => `<option value="${d}" ${inspFilters.domaine === d ? 'selected' : ''}>${DOMAINE_LABELS[d]}</option>`).join('')}</select></div>
-        <div class="filter-group"><label>Niveau</label><select id="f-niveau" onchange="applyFilter('niveau', this.value)"><option value="">Tous</option>${NIVEAUX.map(n => `<option value="${n}" ${inspFilters.niveau === n ? 'selected' : ''}>${n}</option>`).join('')}</select></div>
-        <div class="filter-group"><label>Exp\u00e9rience</label><select id="f-experience" onchange="applyFilter('experience', this.value)">${EXP_FILTERS.map(([v, l]) => `<option value="${v}" ${inspFilters.experience === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
-        <div class="filter-group"><label>Statut</label><select id="f-status" onchange="applyFilter('status', this.value)"><option value="active" ${inspFilters.status === 'active' ? 'selected' : ''}>Actifs</option><option value="inactive" ${inspFilters.status === 'inactive' ? 'selected' : ''}>Inactifs</option><option value="all" ${inspFilters.status === 'all' ? 'selected' : ''}>Tous</option></select></div>
-        <div class="filter-group filter-search"><label>Recherche</label><input type="text" id="f-search" placeholder="Nom ou pr\u00e9nom..." value="${inspFilters.search}" oninput="applySearchDebounced(this.value)"></div>
-      </div>
-      <div class="filters-actions">
-        <button class="btn btn-outline btn-sm" onclick="resetFilters()">R\u00e9initialiser</button>
+    <div class="filters-bar filters-compact">
+      <div class="filters-row-inline">
+        <select id="f-etat" onchange="applyFilter('etat', this.value)"><option value="">Tous les \u00c9tats</option>${ETATS.map(e => `<option value="${e}" ${inspFilters.etat === e ? 'selected' : ''}>${e}</option>`).join('')}</select>
+        <select id="f-domaine" onchange="applyFilter('domaine', this.value)"><option value="">Tous les domaines</option>${DOMAINES.map(d => `<option value="${d}" ${inspFilters.domaine === d ? 'selected' : ''}>${DOMAINE_LABELS[d]}</option>`).join('')}</select>
+        <select id="f-niveau" onchange="applyFilter('niveau', this.value)"><option value="">Tous les niveaux</option>${NIVEAUX.map(n => `<option value="${n}" ${inspFilters.niveau === n ? 'selected' : ''}>${n}</option>`).join('')}</select>
+        <select id="f-experience" onchange="applyFilter('experience', this.value)">${EXP_FILTERS.map(([v, l]) => `<option value="${v}" ${inspFilters.experience === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
+        <select id="f-status" onchange="applyFilter('status', this.value)"><option value="active" ${inspFilters.status === 'active' ? 'selected' : ''}>Actifs</option><option value="inactive" ${inspFilters.status === 'inactive' ? 'selected' : ''}>Inactifs</option><option value="all" ${inspFilters.status === 'all' ? 'selected' : ''}>Tous</option></select>
+        <input type="text" id="f-search" placeholder="Rechercher..." value="${inspFilters.search}" oninput="applySearchDebounced(this.value)" class="filter-search-input">
+        <button class="btn-icon" onclick="resetFilters()" title="R\u00e9initialiser les filtres"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg></button>
         <div class="export-dropdown" style="position:relative;display:inline-block">
           <button class="btn btn-outline btn-sm" onclick="toggleExportMenu()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> T\u00e9l\u00e9charger \u25bc</button>
           <div id="export-menu" class="export-menu">
@@ -371,7 +352,7 @@ function renderInspectorsContent() {
         </div>
         ${state.user?.role === 'Administrateur' ? `<button class="btn btn-outline btn-sm" onclick="document.getElementById('import-inspectors-file').click()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> Importer Excel</button><input type="file" id="import-inspectors-file" accept=".xlsx" style="display:none" onchange="importInspectors(this)">` : ''}
         ${canDeactivate ? `<button class="btn btn-sm" id="insp-delete-btn" style="background:#dc2626;color:white;display:none" onclick="bulkDeleteInspectors()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-2 14H7L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg> Supprimer</button>` : ''}
-        ${canAdd ? `<button class="btn btn-primary btn-sm" onclick="openInspectorForm()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Ajouter un inspecteur</button>` : ''}
+        ${canAdd ? `<button class="btn btn-primary btn-sm" onclick="openInspectorForm()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Inspecteur</button>` : ''}
       </div>
     </div>
     <div class="results-info"><span>${inspectorsData.total} inspecteur${inspectorsData.total > 1 ? 's' : ''} trouv\u00e9${inspectorsData.total > 1 ? 's' : ''}</span></div>
@@ -467,6 +448,9 @@ function buildExportParams() {
   const p = new URLSearchParams();
   if (inspFilters.etat) p.append('etat', inspFilters.etat);
   if (inspFilters.domaine) p.append('domaine', inspFilters.domaine);
+  if (inspFilters.niveau) p.append('niveau', inspFilters.niveau);
+  if (inspFilters.experience) p.append('experience', inspFilters.experience);
+  if (inspFilters.search) p.append('search', inspFilters.search);
   if (inspFilters.status) p.append('status', inspFilters.status);
   return p.toString();
 }
@@ -638,7 +622,7 @@ async function importInspectors(input) { if (!input.files[0]) return; const form
 
 // ===== INSPECTOR MULTI-SELECT =====
 function toggleAllInspectors(checked) { document.querySelectorAll('.insp-check').forEach(cb => cb.checked = checked); updateInspDeleteBtn(); }
-function updateInspDeleteBtn() { const btn = document.getElementById('insp-delete-btn'); if (!btn) return; const count = document.querySelectorAll('.insp-check:checked').length; btn.style.display = count > 0 ? 'inline-flex' : 'none'; btn.textContent = `Supprimer (${count})`; }
+function updateInspDeleteBtn() { const btn = document.getElementById('insp-delete-btn'); if (!btn) return; const count = document.querySelectorAll('.insp-check:checked').length; btn.style.display = count > 0 ? 'inline-flex' : 'none'; btn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-2 14H7L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg> Supprimer (${count})`; }
 async function bulkDeleteInspectors() {
   const ids = [...document.querySelectorAll('.insp-check:checked')].map(cb => parseInt(cb.value));
   if (ids.length === 0) return;
@@ -668,8 +652,40 @@ function renderAnalyticsContent(data) {
   if (!container) return;
   analyticsCharts.forEach(c => c.destroy()); analyticsCharts = [];
   const frm = data.formateurs || {};
+  const totalInsp = (data.byState || []).reduce((s, d) => s + d.count, 0);
+  const nbEtatsInsp = (data.byState || []).length;
+  const nbDomaines = (data.byDomain || []).length;
+  const totalFrm = frm.total || 0;
+  const frmInsp = frm.inspecteurs || 0;
+  const nbEtatsFrm = (frm.byState || []).length;
   container.innerHTML = `
-    <div class="page-header"><h2><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2" style="vertical-align:middle;margin-right:0.5rem"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg> Analyse des donn\u00e9es</h2></div>
+    <div class="page-header"><h2><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2" style="vertical-align:middle;margin-right:0.5rem"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg> Tableau de bord</h2></div>
+    <div class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-icon" style="background:#ebf8ff">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#3182ce" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        </div>
+        <div class="kpi-body"><div class="kpi-value">${totalInsp}</div><div class="kpi-label">Inspecteurs actifs</div></div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-icon" style="background:#faf5ff">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#805ad5" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+        </div>
+        <div class="kpi-body"><div class="kpi-value">${nbDomaines}</div><div class="kpi-label">Domaines couverts</div></div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-icon" style="background:#fff5f5">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#e53e3e" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+        </div>
+        <div class="kpi-body"><div class="kpi-value">${totalFrm}</div><div class="kpi-label">Formateurs actifs</div></div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-icon" style="background:#f0fff4">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+        </div>
+        <div class="kpi-body"><div class="kpi-value">${frmInsp}</div><div class="kpi-label">Aussi inspecteurs</div></div>
+      </div>
+    </div>
     <h3 style="margin:1.5rem 0 0.5rem;color:var(--primary)">Inspecteurs</h3>
     <div class="analytics-grid">
       <div class="chart-card"><h4 class="chart-title">Inspecteurs par \u00c9tat</h4><div class="chart-wrapper"><canvas id="chart-state"></canvas></div></div>
@@ -806,13 +822,6 @@ function openCreateUserForm() {
   });
 }
 
-function generateRandomPw() {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
-  let pw = '';
-  for (let i = 0; i < 10; i++) pw += chars[Math.floor(Math.random() * chars.length)];
-  return pw;
-}
-
 // ===== SETTINGS PAGE =====
 let settingsData = [];
 let settingsCategory = 'etat';
@@ -835,12 +844,14 @@ function renderSettingsContent() {
   container.innerHTML = `
     <div id="settings-msg"></div>
     <div class="page-header"><h2><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2" style="vertical-align:middle;margin-right:0.5rem"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg> Param\u00e8tres</h2></div>
-    <div class="filters-bar">
-      <div class="filters-row">
-        ${categories.map(([val, label]) => `<button class="btn ${settingsCategory === val ? 'btn-primary' : 'btn-outline'} btn-sm" onclick="switchSettingsCategory('${val}')">${label}</button>`).join(' ')}
+    <div class="settings-tab-bar">
+      <div class="settings-tabs">
+        ${categories.map(([val, label]) => `<button class="settings-tab ${settingsCategory === val ? 'active' : ''}" onclick="switchSettingsCategory('${val}')">${label}</button>`).join('')}
       </div>
-      ${isAdmin ? `<div class="filters-actions"><button class="btn btn-primary btn-sm" onclick="openAddSettingForm()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Ajouter</button>
-        <button class="btn btn-sm" style="background:#dc2626;color:white;display:none" id="settings-bulk-delete-btn" onclick="bulkDeleteSettings()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg> Supprimer (<span id="settings-sel-count">0</span>)</button></div>` : ''}
+      ${isAdmin ? `<div class="settings-tab-actions">
+        <button class="btn btn-primary btn-sm" onclick="openAddSettingForm()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Ajouter</button>
+        <button class="btn btn-sm" style="background:#dc2626;color:white;display:none" id="settings-bulk-delete-btn" onclick="bulkDeleteSettings()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg> Supprimer (<span id="settings-sel-count">0</span>)</button>
+      </div>` : ''}
     </div>
     <div class="table-container"><table class="data-table">
       <thead><tr>${isAdmin ? '<th style="width:35px"><input type="checkbox" id="settings-select-all" onchange="toggleAllSettings(this.checked)"></th>' : ''}<th>Valeur</th>${settingsCategory === 'domaine' ? '<th>Description</th>' : ''}<th>Statut</th>${isAdmin ? '<th>Actions</th>' : ''}</tr></thead>
@@ -967,29 +978,27 @@ function renderFormateursContent() {
 
   container.innerHTML = `
     <div id="frm-floating-msg"></div>
-    <div class="dashboard-section">
+    <div class="dashboard-section dashboard-domaine-full">
       <h3 class="dashboard-title"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> Formateurs par \u00c9tat</h3>
-      <div class="dashboard">
+      <div class="dashboard dashboard-flex">
         <div class="stat-card stat-total"><div class="stat-number">${formateursStats.total}</div><div class="stat-label">Total Formateurs</div></div>
         ${formateursStats.byState.map(s => `<div class="stat-card" onclick="frmFilterByState('${s.etat.replace(/'/g, "\\'")}')" style="cursor:pointer${frmFilters.etat === s.etat ? ';border-color:var(--primary)' : ''}"><div class="stat-number">${s.count}</div><div class="stat-label">${s.etat}</div></div>`).join('')}
       </div>
     </div>
-    <div class="dashboard-section">
+    <div class="dashboard-section dashboard-domaine-full">
       <h3 class="dashboard-title"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> Situation par Comp\u00e9tence</h3>
-      <div class="dashboard">
+      <div class="dashboard dashboard-flex">
         ${(formateursStats.byCompetence || []).map(c => `<div class="stat-card" onclick="frmApplyFilter('competence','${c.type_competence.replace(/'/g, "\\'")}')" style="cursor:pointer${frmFilters.competence === c.type_competence ? ';border-color:var(--primary)' : ''}"><div class="stat-number">${c.count}</div><div class="stat-label">${c.type_competence}</div></div>`).join('')}
       </div>
     </div>
-    <div class="filters-bar">
-      <div class="filters-row">
-        <div class="filter-group"><label>\u00c9tat</label><select onchange="frmApplyFilter('etat', this.value)"><option value="">Tous les \u00c9tats</option>${ETATS.map(e => `<option value="${e}" ${frmFilters.etat === e ? 'selected' : ''}>${e}</option>`).join('')}</select></div>
-        <div class="filter-group"><label>Comp\u00e9tence</label><select onchange="frmApplyFilter('competence', this.value)"><option value="">Toutes</option>${FORMATEUR_TYPES.map(t => '<option value="' + t + '"' + (frmFilters.competence === t ? ' selected' : '') + '>' + t + '</option>').join('')}</select></div>
-        <div class="filter-group"><label>Domaine</label><select onchange="frmApplyFilter('domaine', this.value)"><option value="">Tous</option>${DOMAINES.map(d => `<option value="${d}" ${frmFilters.domaine === d ? 'selected' : ''}>${DOMAINE_LABELS[d] || d}</option>`).join('')}</select></div>
-        <div class="filter-group"><label>Statut</label><select onchange="frmApplyFilter('status', this.value)"><option value="active" ${frmFilters.status === 'active' ? 'selected' : ''}>Actifs</option><option value="inactive" ${frmFilters.status === 'inactive' ? 'selected' : ''}>Inactifs</option><option value="all" ${frmFilters.status === 'all' ? 'selected' : ''}>Tous</option></select></div>
-        <div class="filter-group filter-search"><label>Recherche</label><input type="text" placeholder="Nom ou pr\u00e9nom..." value="${frmFilters.search}" oninput="frmSearchDebounced(this.value)"></div>
-      </div>
-      <div class="filters-actions">
-        <button class="btn btn-outline btn-sm" onclick="frmResetFilters()">R\u00e9initialiser</button>
+    <div class="filters-bar filters-compact">
+      <div class="filters-row-inline">
+        <select onchange="frmApplyFilter('etat', this.value)"><option value="">Tous les \u00c9tats</option>${ETATS.map(e => `<option value="${e}" ${frmFilters.etat === e ? 'selected' : ''}>${e}</option>`).join('')}</select>
+        <select onchange="frmApplyFilter('competence', this.value)"><option value="">Toutes comp\u00e9tences</option>${FORMATEUR_TYPES.map(t => '<option value="' + t + '"' + (frmFilters.competence === t ? ' selected' : '') + '>' + t + '</option>').join('')}</select>
+        <select onchange="frmApplyFilter('domaine', this.value)"><option value="">Tous les domaines</option>${DOMAINES.map(d => `<option value="${d}" ${frmFilters.domaine === d ? 'selected' : ''}>${DOMAINE_LABELS[d] || d}</option>`).join('')}</select>
+        <select onchange="frmApplyFilter('status', this.value)"><option value="active" ${frmFilters.status === 'active' ? 'selected' : ''}>Actifs</option><option value="inactive" ${frmFilters.status === 'inactive' ? 'selected' : ''}>Inactifs</option><option value="all" ${frmFilters.status === 'all' ? 'selected' : ''}>Tous</option></select>
+        <input type="text" placeholder="Rechercher..." value="${frmFilters.search}" oninput="frmSearchDebounced(this.value)" class="filter-search-input">
+        <button class="btn-icon" onclick="frmResetFilters()" title="R\u00e9initialiser les filtres"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg></button>
         <div class="export-dropdown" style="position:relative;display:inline-block">
           <button class="btn btn-outline btn-sm" onclick="toggleFrmExportMenu()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> T\u00e9l\u00e9charger \u25bc</button>
           <div id="frm-export-menu" class="export-menu">
@@ -1000,7 +1009,7 @@ function renderFormateursContent() {
         </div>
         ${state.user?.role === 'Administrateur' ? `<button class="btn btn-outline btn-sm" onclick="document.getElementById('import-frm-file').click()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> Importer Excel</button><input type="file" id="import-frm-file" accept=".xlsx" style="display:none" onchange="importFormateurs(this)">` : ''}
         ${canDeactivate ? `<button class="btn btn-sm" id="frm-delete-btn" style="background:#dc2626;color:white;display:none" onclick="bulkDeleteFormateurs()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-2 14H7L5 6"/></svg> Supprimer</button>` : ''}
-        ${canAdd ? `<button class="btn btn-primary btn-sm" onclick="openFormateurForm()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Ajouter un formateur</button>` : ''}
+        ${canAdd ? `<button class="btn btn-primary btn-sm" onclick="openFormateurForm()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Formateur</button>` : ''}
       </div>
     </div>
     <div class="results-info"><span>${formateursData.total} formateur${formateursData.total > 1 ? 's' : ''} trouv\u00e9${formateursData.total > 1 ? 's' : ''}</span></div>
@@ -1101,7 +1110,7 @@ async function viewFormateur(id) {
 
 // ===== FORMATEUR MULTI-SELECT =====
 function toggleAllFormateurs(checked) { document.querySelectorAll('.frm-check').forEach(cb => cb.checked = checked); updateFrmDeleteBtn(); }
-function updateFrmDeleteBtn() { const btn = document.getElementById('frm-delete-btn'); if (!btn) return; const count = document.querySelectorAll('.frm-check:checked').length; btn.style.display = count > 0 ? 'inline-flex' : 'none'; btn.textContent = `Supprimer (${count})`; }
+function updateFrmDeleteBtn() { const btn = document.getElementById('frm-delete-btn'); if (!btn) return; const count = document.querySelectorAll('.frm-check:checked').length; btn.style.display = count > 0 ? 'inline-flex' : 'none'; btn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-2 14H7L5 6"/></svg> Supprimer (${count})`; }
 async function bulkDeleteFormateurs() {
   const ids = [...document.querySelectorAll('.frm-check:checked')].map(cb => parseInt(cb.value));
   if (ids.length === 0) return;
@@ -1241,7 +1250,13 @@ function toggleFrmExportMenu() {
 
 async function exportFormateursFile(format) {
   try {
-    const res = await fetch(`/api/formateurs/export/${format}`, { headers: { 'Authorization': `Bearer ${state.token}` } });
+    const p = new URLSearchParams();
+    if (frmFilters.etat) p.append('etat', frmFilters.etat);
+    if (frmFilters.competence) p.append('competence', frmFilters.competence);
+    if (frmFilters.domaine) p.append('domaine', frmFilters.domaine);
+    if (frmFilters.search) p.append('search', frmFilters.search);
+    if (frmFilters.status) p.append('status', frmFilters.status);
+    const res = await fetch(`/api/formateurs/export/${format}?${p.toString()}`, { headers: { 'Authorization': `Bearer ${state.token}` } });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || 'Erreur lors du t\u00e9l\u00e9chargement');
