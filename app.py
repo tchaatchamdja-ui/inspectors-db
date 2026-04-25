@@ -2123,8 +2123,23 @@ def import_formateurs():
 
 
 # Initialize database on import (for gunicorn) and on direct run
-init_db()
-print("Base de données initialisée")
+import time as _time
+
+def _init_db_with_retry(retries=10, delay=4):
+    for attempt in range(1, retries + 1):
+        try:
+            init_db()
+            print(f"Base de données initialisée (tentative {attempt})")
+            return
+        except Exception as e:
+            print(f"[init_db] Tentative {attempt}/{retries} échouée : {e}")
+            if attempt < retries:
+                _time.sleep(delay)
+            else:
+                print("[init_db] Impossible d'initialiser la base après plusieurs tentatives.")
+                raise
+
+_init_db_with_retry()
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5005))
