@@ -20,6 +20,7 @@ except ImportError:
     pass
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+_DT_FMT = "%d/%m/%Y à %H:%M"   # format date/heure — backslash hors f-string (Python 3.11)
 DB_PATH = os.path.join(BASE_DIR, 'data', 'inspectors.db')
 UPLOAD_DIR = os.path.join(BASE_DIR, 'uploads')
 DATABASE_URL = os.environ.get('DATABASE_URL', '')
@@ -1016,7 +1017,7 @@ def export_excel():
     # Date row
     ws.merge_cells('A2:K2')
     date_cell = ws['A2']
-    date_cell.value = f'Export\u00e9 le {datetime.now().strftime("%d/%m/%Y \u00e0 %H:%M")}'
+    date_cell.value = 'Export\u00e9 le ' + datetime.now().strftime(_DT_FMT)
     date_cell.font = Font(name='Calibri', italic=True, size=10, color='666666')
     date_cell.alignment = Alignment(horizontal='center')
     ws.row_dimensions[2].height = 22
@@ -1142,7 +1143,7 @@ def export_pdf():
             self.cell(0, 6, subtitle, new_x="LMARGIN", new_y="NEXT", align='C')
             self.set_font('ArialUni', 'I', 8)
             self.set_text_color(113, 128, 150)
-            self.cell(0, 5, clean(f'Export\u00e9 le {datetime.now().strftime("%d/%m/%Y \u00e0 %H:%M")} | Total: {len(rows)} enregistrement(s)'), new_x="LMARGIN", new_y="NEXT", align='C')
+            self.cell(0, 5, clean('Export\u00e9 le ' + datetime.now().strftime(_DT_FMT) + f' | Total: {len(rows)} enregistrement(s)'), new_x="LMARGIN", new_y="NEXT", align='C')
             self.set_draw_color(26, 54, 93)
             self.set_line_width(0.5)
             self.line(self.l_margin, self.get_y() + 2, self.w - self.r_margin, self.get_y() + 2)
@@ -1925,7 +1926,7 @@ def export_formateurs_excel():
     ws['A1'].alignment = Alignment(horizontal='center', vertical='center')
     ws.row_dimensions[1].height = 35
     ws.merge_cells('A2:H2')
-    ws['A2'].value = f'Exporté le {datetime.now().strftime("%d/%m/%Y à %H:%M")}'
+    ws['A2'].value = 'Exporté le ' + datetime.now().strftime(_DT_FMT)
     ws['A2'].font = Font(name='Calibri', italic=True, size=10, color='666666')
     ws['A2'].alignment = Alignment(horizontal='center')
     ws.row_dimensions[3].height = 8
@@ -2022,7 +2023,7 @@ def export_formateurs_pdf():
             self.cell(0, 6, clean('Base de donnees des Formateurs'), new_x="LMARGIN", new_y="NEXT", align='C')
             self.set_font('ArialUni', 'I', 8)
             self.set_text_color(113, 128, 150)
-            self.cell(0, 5, clean(f'Exporte le {datetime.now().strftime("%d/%m/%Y a %H:%M")} | Total: {len(rows)} enregistrement(s)'), new_x="LMARGIN", new_y="NEXT", align='C')
+            self.cell(0, 5, clean('Exporté le ' + datetime.now().strftime(_DT_FMT) + f' | Total: {len(rows)} enregistrement(s)'), new_x="LMARGIN", new_y="NEXT", align='C')
             self.set_draw_color(26, 54, 93)
             self.set_line_width(0.5)
             self.line(self.l_margin, self.get_y() + 2, self.w - self.r_margin, self.get_y() + 2)
