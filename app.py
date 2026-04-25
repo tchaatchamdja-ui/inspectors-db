@@ -904,7 +904,7 @@ def import_inspectors():
                 ref = generate_reference(db)
                 db.execute("INSERT INTO inspectors (reference, nom, prenom, etat, email, telephone) VALUES (?, ?, ?, ?, ?, ?)",
                            (ref, nom, prenom, etat, email, telephone))
-                ins_id = db.execute("SELECT last_insert_rowid()").fetchone()[0]
+                ins_id = db.lastrowid
                 if email:
                     default_pw = '12345'
                     hashed = bcrypt.hashpw(default_pw.encode(), bcrypt.gensalt()).decode()
@@ -1778,7 +1778,7 @@ def add_formateur():
                 file.save(os.path.join(UPLOAD_DIR, cv_path))
         db.execute("INSERT INTO formateurs (reference, nom, prenom, etat, email, telephone, cv_path, is_inspecteur) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                    (ref, nom, prenom, etat, email, telephone, cv_path, is_inspecteur))
-        frm_id = db.execute("SELECT last_insert_rowid()").fetchone()[0]
+        frm_id = db.lastrowid
         competences_json = request.form.get('competences', '[]')
         for c in json.loads(competences_json):
             if c.get('type_competence'):
