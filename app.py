@@ -32,18 +32,9 @@ JWT_EXP_MINUTES = 20
 if USE_POSTGRES:
     import psycopg2
     import psycopg2.extras
-    from psycopg2.pool import ThreadedConnectionPool
     # Render uses postgres:// but psycopg2 needs postgresql://
     if DATABASE_URL.startswith('postgres://'):
         DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
-
-_pg_pool = None
-
-def get_pg_pool():
-    global _pg_pool
-    if _pg_pool is None:
-        _pg_pool = ThreadedConnectionPool(2, 10, DATABASE_URL)
-    return _pg_pool
 
 # SMTP Configuration for email sending
 SMTP_HOST = os.environ.get('SMTP_HOST', 'smtp.office365.com')
@@ -106,9 +97,8 @@ class PgRowWrapper(dict):
 
 class PgCursorWrapper:
     """Wrap psycopg2 cursor to match sqlite3 API"""
-    def __init__(self, conn, pool=None):
+    def __init__(self, conn):
         self._conn = conn
-        self._pool = pool
         self._cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         self._last_insert_id = None
 
@@ -147,10 +137,7 @@ class PgCursorWrapper:
 
     def close(self):
         self._cursor.close()
-        if self._pool:
-            self._pool.putconn(self._conn)
-        else:
-            self._conn.close()
+        self._conn.close()
 
     @property
     def lastrowid(self):
@@ -158,9 +145,8 @@ class PgCursorWrapper:
 
 def get_db():
     if USE_POSTGRES:
-        pool = get_pg_pool()
-        conn = pool.getconn()
-        return PgCursorWrapper(conn, pool)
+        conn = psycopg2.connect(DATABASE_URL, sslmode='require', connect_timeout=10)
+        return PgCursorWrapper(conn)
     else:
         db = sqlite3.connect(DB_PATH, timeout=10)
         db.row_factory = sqlite3.Row
