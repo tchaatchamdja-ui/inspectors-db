@@ -83,10 +83,16 @@ def _q(sql):
     if USE_POSTGRES:
         sql = sql.replace('?', '%s')
         sql = sql.replace("datetime('now')", 'CURRENT_TIMESTAMP')
-        # GROUP_CONCAT → STRING_AGG (handle nested parentheses like COALESCE)
+        # INSERT OR IGNORE → INSERT ... ON CONFLICT DO NOTHING
         import re
+        sql = re.sub(r'INSERT\s+OR\s+IGNORE\s+INTO', 'INSERT INTO', sql, flags=re.IGNORECASE)
+        # INSERT OR REPLACE → INSERT ... ON CONFLICT DO NOTHING (best effort)
+        sql = re.sub(r'INSERT\s+OR\s+REPLACE\s+INTO', 'INSERT INTO', sql, flags=re.IGNORECASE)
+        # GROUP_CONCAT → STRING_AGG (handle nested parentheses like COALESCE)
         sql = re.sub(r'GROUP_CONCAT\(DISTINCT\s+((?:[^()]*|\([^()]*\))*)\)', r"STRING_AGG(DISTINCT (\1)::text, ', ')", sql)
         sql = re.sub(r'GROUP_CONCAT\(((?:[^()]*|\([^()]*\))*)\)', r"STRING_AGG((\1)::text, ', ')", sql)
+        # Append ON CONFLICT DO NOTHING for converted INSERT OR IGNORE
+        # (handled below in execute() via flag)
         # || works in both SQLite and PostgreSQL, no change needed
     return sql
 
@@ -103,11 +109,12 @@ class PgCursorWrapper:
         self._last_insert_id = None
 
     def execute(self, sql, params=None):
+        import re as _re
+        is_ignore = bool(_re.search(r'INSERT\s+OR\s+IGNORE', sql, _re.IGNORECASE))
         converted = _q(sql)
-        # Auto-add RETURNING id for INSERT statements to support lastrowid
         if converted.strip().upper().startswith('INSERT') and 'RETURNING' not in converted.upper():
-            converted += ' RETURNING id'
-            self._cursor.execute(converted, params or ())
+            suffix = ' ON CONFLICT DO NOTHING RETURNING id' if is_ignore else ' RETURNING id'
+            self._cursor.execute(converted + suffix, params or ())
             row = self._cursor.fetchone()
             self._last_insert_id = row['id'] if row else None
         else:
