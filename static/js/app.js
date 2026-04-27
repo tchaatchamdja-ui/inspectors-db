@@ -30,6 +30,14 @@ function navigate(page) {
   state.page = page;
   location.hash = page;
   render();
+  window.scrollTo(0, 0);
+}
+
+async function reloadKeepScroll(fn) {
+  const y = window.scrollY;
+  const x = window.scrollX;
+  await fn();
+  requestAnimationFrame(() => window.scrollTo(x, y));
 }
 
 let inactivityTimer;
@@ -285,6 +293,7 @@ let inspectorsData = { inspectors: [], total: 0 };
 let inspectorsStats = { total: 0, byState: [], byDomain: [] };
 let inspFilters = { etat: '', domaine: '', niveau: '', experience: '', search: '', status: 'active' };
 let inspPage = 1;
+let inspPageSize = 50;
 let inspSort = { col: '', dir: 'asc' };
 
 async function loadInspectorsPage() {
@@ -309,6 +318,7 @@ function buildFilterParams() {
   if (inspFilters.search) p.append('search', inspFilters.search);
   p.append('status', inspFilters.status);
   p.append('page', inspPage);
+  p.append('limit', inspPageSize);
   return p.toString();
 }
 
@@ -352,31 +362,34 @@ function renderInspectorsContent() {
             <button onclick="exportFile('pdf')" class="export-item"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span>Export PDF</span><small>.pdf</small></button>
           </div>
         </div>
-        ${state.user?.role === 'Administrateur' ? `<button class="btn btn-outline btn-sm" onclick="document.getElementById('import-inspectors-file').click()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> Importer Excel</button><input type="file" id="import-inspectors-file" accept=".xlsx" style="display:none" onchange="importInspectors(this)">` : ''}
+        ${state.user?.role === 'Administrateur' ? `<button class="btn btn-outline btn-sm" title="Télécharger le modèle Excel" onclick="downloadImportTemplate('inspectors')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Modèle</button><button class="btn btn-outline btn-sm" onclick="document.getElementById('import-inspectors-file').click()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> Importer Excel</button><input type="file" id="import-inspectors-file" accept=".xlsx" style="display:none" onchange="importInspectors(this)">` : ''}
         ${canDeactivate ? `<button class="btn btn-sm" id="insp-delete-btn" style="background:#dc2626;color:white;display:none" onclick="bulkDeleteInspectors()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-2 14H7L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg> Supprimer</button>` : ''}
         ${canAdd ? `<button class="btn btn-primary btn-sm" onclick="openInspectorForm()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Inspecteur</button>` : ''}
       </div>
     </div>
-    <div class="results-info"><span>${inspectorsData.total} inspecteur${inspectorsData.total > 1 ? 's' : ''} trouv\u00e9${inspectorsData.total > 1 ? 's' : ''}</span></div>
+    <div class="results-info" style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap"><span>${inspectorsData.total} inspecteur${inspectorsData.total > 1 ? 's' : ''} trouv\u00e9${inspectorsData.total > 1 ? 's' : ''}</span><label style="display:flex;align-items:center;gap:0.5rem;font-size:0.875rem">Afficher <select onchange="changeInspPageSize(this.value)" style="padding:0.25rem 0.5rem">${[10,25,50,100,200].map(n=>`<option value="${n}" ${inspPageSize===n?'selected':''}>${n}</option>`).join('')}</select> par page</label></div>
     <div class="table-container">
       <table class="data-table">
-        <thead><tr>${canDeactivate ? '<th style="width:30px"><input type="checkbox" onchange="toggleAllInspectors(this.checked)"></th>' : ''}<th class="sortable" onclick="inspSortBy('reference')">R\u00e9f.${inspSortIcon('reference')}</th><th class="sortable" onclick="inspSortBy('nom')">Nom et Pr\u00e9nom${inspSortIcon('nom')}</th><th class="sortable" onclick="inspSortBy('etat')">\u00c9tat${inspSortIcon('etat')}</th><th class="sortable" onclick="inspSortBy('domaine')">Domaine${inspSortIcon('domaine')}</th><th>Sp\u00e9cialit\u00e9</th><th class="sortable" onclick="inspSortBy('niveau')">Niveau${inspSortIcon('niveau')}</th><th>Exp.</th><th>Actions</th></tr></thead>
+        <thead><tr>${canDeactivate ? '<th style="width:30px"><input type="checkbox" onchange="toggleAllInspectors(this.checked)"></th>' : ''}<th class="sortable" style="display:none" onclick="inspSortBy('reference')">R\u00e9f.${inspSortIcon('reference')}</th><th class="sortable" onclick="inspSortBy('nom')">Nom et Pr\u00e9nom${inspSortIcon('nom')}</th><th class="sortable" onclick="inspSortBy('etat')">\u00c9tat${inspSortIcon('etat')}</th><th class="sortable" onclick="inspSortBy('domaine')">Domaine${inspSortIcon('domaine')}</th><th>Sp\u00e9cialit\u00e9</th><th>Titularisation</th><th class="sortable" onclick="inspSortBy('niveau')">Niveau${inspSortIcon('niveau')}</th><th>Exp.</th><th>Actions</th></tr></thead>
         <tbody>
-          ${inspectorsData.inspectors.length === 0 ? `<tr><td colspan="${canDeactivate ? 9 : 8}" class="text-center">Aucun inspecteur trouv\u00e9</td></tr>` :
+          ${inspectorsData.inspectors.length === 0 ? `<tr><td colspan="${canDeactivate ? 10 : 9}" class="text-center">Aucun inspecteur trouv\u00e9</td></tr>` :
             inspectorsData.inspectors.map(ins => {
               const domains = [...new Set((ins.qualifications || []).map(q => q.domaine))].join(', ');
               const specs = (ins.qualifications || []).map(q => q.specialite).join('; ');
+              const tit0 = ins.qualifications?.[0]?.titularisation || '';
+              const titFmt = tit0 ? new Date(tit0 + '-01').toLocaleDateString('fr-FR', { month: 'short', year: 'numeric' }) : '';
               const niveau = ins.qualifications?.[0]?.niveau || '';
               const exp = ins.qualifications?.[0]?.experience || '';
               const canEditThis = role === 'Administrateur' || role === 'R\u00e9gional' || role === 'National 1' || (role === 'National 2' && state.user?.inspectorId === ins.id);
               const inactiveClass = !ins.is_active ? ' row-inactive' : '';
               return `<tr class="${inactiveClass}">
                 ${canDeactivate ? `<td><input type="checkbox" class="insp-check" value="${ins.id}" onchange="updateInspDeleteBtn()"></td>` : ''}
-                <td class="ref-cell">${ins.reference}</td>
+                <td class="ref-cell" style="display:none">${ins.reference}</td>
                 <td>${esc(ins.nom)} ${esc(ins.prenom)}</td>
                 <td><span class="state-badge">${esc(ins.etat)}</span></td>
                 <td>${esc(domains)}</td>
                 <td class="specialite-cell" title="${esc(specs)}">${esc(specs)}</td>
+                <td>${titFmt}</td>
                 <td>${esc(niveau)}</td>
                 <td>${esc(exp)}</td>
                 <td class="actions-cell">
@@ -384,6 +397,7 @@ function renderInspectorsContent() {
                   ${canEditThis ? `<button class="btn-icon" title="Modifier" onclick="editInspector(${ins.id})"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>` : ''}
                   ${canEmail && ins.email ? `<button class="btn-icon" title="Email" onclick="openEmailForm(${ins.id}, '${esc(ins.email)}', '${esc(ins.prenom)} ${esc(ins.nom)}')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg></button>` : ''}
                   ${ins.cv_path ? `<a class="btn-icon" href="/uploads/${ins.cv_path}" download title="CV"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></a>` : ''}
+                  ${role === 'Administrateur' ? `<button class="btn-icon" title="${ins.has_user ? 'Compte utilisateur d\u00e9j\u00e0 cr\u00e9\u00e9' : 'Cr\u00e9er un compte utilisateur'}" ${ins.has_user ? 'disabled style="opacity:0.4;cursor:not-allowed"' : ''} onclick="createUserForInspector(${ins.id}, '${esc(ins.email||'')}', ${ins.has_user?'true':'false'})"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg></button>` : ''}
                   ${canDeactivate && ins.is_active ? `<button class="btn-icon btn-danger" title="D\u00e9sactiver" onclick="deactivateInspector(${ins.id})"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg></button>` : ''}
                   ${canDeactivate && !ins.is_active ? `<button class="btn-icon btn-success" title="R\u00e9activer" onclick="activateInspector(${ins.id})"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg></button>` : ''}
                 </td>
@@ -392,7 +406,7 @@ function renderInspectorsContent() {
         </tbody>
       </table>
     </div>
-    ${inspectorsData.total > 50 ? `<div class="pagination"><button ${inspPage <= 1 ? 'disabled' : ''} onclick="changePage(${inspPage - 1})">Pr\u00e9c\u00e9dent</button><span>Page ${inspPage} / ${inspectorsData.totalPages}</span><button ${inspPage >= inspectorsData.totalPages ? 'disabled' : ''} onclick="changePage(${inspPage + 1})">Suivant</button></div>` : ''}
+    ${inspectorsData.totalPages > 1 ? `<div class="pagination"><button ${inspPage <= 1 ? 'disabled' : ''} onclick="changePage(${inspPage - 1})">Pr\u00e9c\u00e9dent</button><span>Page ${inspPage} / ${inspectorsData.totalPages}</span><button ${inspPage >= inspectorsData.totalPages ? 'disabled' : ''} onclick="changePage(${inspPage + 1})">Suivant</button></div>` : ''}
   `;
 }
 
@@ -403,6 +417,7 @@ let searchTimeout;
 function applySearchDebounced(value) { clearTimeout(searchTimeout); searchTimeout = setTimeout(() => { inspFilters.search = value; inspPage = 1; reloadInspectors(); }, 300); }
 function resetFilters() { inspFilters = { etat: '', domaine: '', niveau: '', experience: '', search: '', status: 'active' }; inspPage = 1; reloadInspectors(); }
 function changePage(p) { inspPage = p; reloadInspectors(); }
+function changeInspPageSize(n) { inspPageSize = parseInt(n); inspPage = 1; reloadInspectors(); }
 
 function inspSortIcon(col) {
   if (inspSort.col !== col) return ' <span style="opacity:0.3;font-size:0.7em">\u25B2\u25BC</span>';
@@ -531,18 +546,18 @@ async function viewInspector(id) {
           <div class="detail-item"><label>Statut</label><span class="status-badge ${ins.is_active ? 'active' : 'inactive'}">${ins.is_active ? 'Actif' : 'Inactif'}</span></div>
         </div>
         <h4 style="margin-top:1.5rem;margin-bottom:0.5rem">Qualifications</h4>
-        ${(ins.qualifications || []).map(q => `<div class="qual-card"><span class="qual-domain">${DOMAINE_LABELS[q.domaine] || q.domaine}</span><div><strong>Sp\u00e9cialit\u00e9:</strong> ${esc(q.specialite)}</div><div><strong>Niveau:</strong> ${esc(q.niveau)}</div><div><strong>Exp\u00e9rience:</strong> ${esc(q.experience || 'Non renseign\u00e9e')}</div></div>`).join('')}
+        ${(ins.qualifications || []).map(q => { const tf = q.titularisation ? new Date(q.titularisation+'-01').toLocaleDateString('fr-FR',{month:'short',year:'numeric'}) : ''; return `<div class="qual-card"><span class="qual-domain">${DOMAINE_LABELS[q.domaine] || q.domaine}</span><div><strong>Sp\u00e9cialit\u00e9:</strong> ${esc(q.specialite)}</div><div><strong>Niveau:</strong> ${esc(q.niveau)}</div>${tf ? `<div><strong>Titularisation:</strong> ${tf}</div>` : ''}<div><strong>Exp\u00e9rience:</strong> ${esc(q.experience || 'Non renseign\u00e9e')}</div></div>`; }).join('')}
       </div>
     `);
   } catch (err) { showMessage(err.message, 'error'); }
 }
 
 // ===== INSPECTOR FORM =====
-let formQuals = [{ domaine: '', specialite: '', niveau: '', experience: '' }];
+let formQuals = [{ domaine: '', specialite: '', niveau: '', experience: '', titularisation: '' }];
 
 function openInspectorForm(inspector = null) {
   const isEdit = !!inspector;
-  formQuals = inspector?.qualifications?.length > 0 ? inspector.qualifications.map(q => ({ domaine: q.domaine, specialite: q.specialite, niveau: q.niveau, experience: q.experience || '' })) : [{ domaine: '', specialite: '', niveau: '', experience: '' }];
+  formQuals = inspector?.qualifications?.length > 0 ? inspector.qualifications.map(q => ({ domaine: q.domaine, specialite: q.specialite, niveau: q.niveau, experience: q.experience || '', titularisation: q.titularisation || '' })) : [{ domaine: '', specialite: '', niveau: '', experience: '', titularisation: '' }];
   const userRole = state.user?.role;
   const isNat1 = userRole === 'National 1';
 
@@ -582,6 +597,7 @@ function openInspectorForm(inspector = null) {
     formData.append('etat', document.getElementById('f-etat-form').value);
     formData.append('email', document.getElementById('f-email').value);
     formData.append('telephone', document.getElementById('f-tel').value);
+    formQuals.forEach((q, i) => { const el = document.getElementById(`q-tit-${i}`); if (el) q.titularisation = el.value; });
     formData.append('qualifications', JSON.stringify(formQuals.filter(q => q.domaine)));
     const cvFile = document.getElementById('f-cv').files[0];
     if (cvFile) formData.append('cv', cvFile);
@@ -593,7 +609,7 @@ function openInspectorForm(inspector = null) {
       let data;
       try { data = JSON.parse(text); } catch(e) { throw new Error('R\u00e9ponse serveur invalide. V\u00e9rifiez votre session.'); }
       if (!res.ok) throw new Error(data.error || 'Erreur serveur');
-      closeModal(); showMessage('Sauvegard\u00e9 avec succ\u00e8s'); loadInspectorsPage();
+      closeModal(); showMessage('Sauvegard\u00e9 avec succ\u00e8s'); reloadKeepScroll(reloadInspectors);
     } catch (err) { errDiv.innerHTML = `<div class="alert alert-error">${err.message}</div>`; btn.disabled = false; btn.textContent = isEdit ? 'Modifier' : 'Ajouter'; }
   });
 }
@@ -607,6 +623,7 @@ function renderQualsRows() {
       </div>
       <div class="form-row">
         <div class="form-group"><label>Niveau</label><select onchange="updateQual(${i},'niveau',this.value)"><option value="">S\u00e9lectionner</option>${NIVEAUX.map(n => `<option value="${n}" ${q.niveau === n ? 'selected' : ''}>${n}</option>`).join('')}</select></div>
+        <div class="form-group"><label>Titularisation</label><input type="month" id="q-tit-${i}" value="${esc(q.titularisation)}" onchange="updateQual(${i},'titularisation',this.value)" ${q.niveau === 'Inspecteur Stagiaire' ? 'disabled title="Non applicable pour Inspecteur Stagiaire"' : ''}></div>
         <div class="form-group"><label>Exp\u00e9rience</label><input type="text" value="${esc(q.experience)}" oninput="updateQual(${i},'experience',this.value)" placeholder="Ex: 5 ans"></div>
         ${formQuals.length > 1 ? `<button type="button" class="btn-icon btn-danger" style="align-self:flex-end;margin-bottom:0.5rem" onclick="removeQualRow(${i})"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>` : ''}
       </div>
@@ -614,13 +631,23 @@ function renderQualsRows() {
   `).join('');
 }
 
-function updateQual(idx, field, value) { formQuals[idx][field] = value; }
-function addQualRow() { formQuals.push({ domaine: '', specialite: '', niveau: '', experience: '' }); document.getElementById('quals-container').innerHTML = renderQualsRows(); }
+function updateQual(idx, field, value) { formQuals[idx][field] = value; if (field === 'niveau') { if (value === 'Inspecteur Stagiaire') formQuals[idx].titularisation = ''; document.getElementById('quals-container').innerHTML = renderQualsRows(); } }
+function addQualRow() { formQuals.push({ domaine: '', specialite: '', niveau: '', experience: '', titularisation: '' }); document.getElementById('quals-container').innerHTML = renderQualsRows(); }
 function removeQualRow(idx) { formQuals.splice(idx, 1); document.getElementById('quals-container').innerHTML = renderQualsRows(); }
 async function editInspector(id) { try { const ins = await api(`/inspectors/${id}`); openInspectorForm(ins); } catch (err) { showMessage(err.message, 'error'); } }
-async function deactivateInspector(id) { if (!confirm('Voulez-vous vraiment d\u00e9sactiver cet inspecteur ?')) return; try { await api(`/inspectors/${id}/deactivate`, { method: 'PUT' }); showMessage('Inspecteur d\u00e9sactiv\u00e9'); loadInspectorsPage(); } catch (err) { showMessage(err.message, 'error'); } }
-async function activateInspector(id) { if (!confirm('Voulez-vous vraiment r\u00e9activer cet inspecteur ?')) return; try { await api(`/inspectors/${id}/activate`, { method: 'PUT' }); showMessage('Inspecteur r\u00e9activ\u00e9'); loadInspectorsPage(); } catch (err) { showMessage(err.message, 'error'); } }
-async function importInspectors(input) { if (!input.files[0]) return; const formData = new FormData(); formData.append('file', input.files[0]); try { const res = await fetch('/api/inspectors/import', { method: 'POST', headers: { 'Authorization': `Bearer ${state.token}` }, body: formData }); const data = await res.json(); if (!res.ok) throw new Error(data.error); showMessage(data.message); loadInspectorsPage(); } catch (err) { showMessage(err.message, 'error'); } input.value = ''; }
+async function deactivateInspector(id) { if (!confirm('Voulez-vous vraiment d\u00e9sactiver cet inspecteur ?')) return; try { await api(`/inspectors/${id}/deactivate`, { method: 'PUT' }); showMessage('Inspecteur d\u00e9sactiv\u00e9'); reloadKeepScroll(reloadInspectors); } catch (err) { showMessage(err.message, 'error'); } }
+async function createUserForInspector(id, email, hasUser) {
+  if (hasUser) { showMessage('Un compte utilisateur est d\u00e9j\u00e0 associ\u00e9 \u00e0 cet inspecteur', 'error'); return; }
+  if (!email) { showMessage("Veuillez renseigner l'email de l'inspecteur avant de cr\u00e9er son compte utilisateur", 'error'); return; }
+  if (!confirm(`Cr\u00e9er un compte utilisateur pour ${email} ?`)) return;
+  try {
+    const data = await api(`/inspectors/${id}/create-user`, { method: 'POST' });
+    showMessage(`Compte cr\u00e9\u00e9. Identifiant: ${data.username} \u2014 Mot de passe: ${data.password}`);
+    reloadKeepScroll(reloadInspectors);
+  } catch (err) { showMessage(err.message, 'error'); }
+}
+async function activateInspector(id) { if (!confirm('Voulez-vous vraiment r\u00e9activer cet inspecteur ?')) return; try { await api(`/inspectors/${id}/activate`, { method: 'PUT' }); showMessage('Inspecteur r\u00e9activ\u00e9'); reloadKeepScroll(reloadInspectors); } catch (err) { showMessage(err.message, 'error'); } }
+async function importInspectors(input) { if (!input.files[0]) return; const formData = new FormData(); formData.append('file', input.files[0]); try { const res = await fetch('/api/inspectors/import', { method: 'POST', headers: { 'Authorization': `Bearer ${state.token}` }, body: formData }); const data = await res.json(); if (!res.ok) throw new Error(data.error); showMessage(data.message); reloadKeepScroll(reloadInspectors); } catch (err) { showMessage(err.message, 'error'); } input.value = ''; }
 
 // ===== INSPECTOR MULTI-SELECT =====
 function toggleAllInspectors(checked) { document.querySelectorAll('.insp-check').forEach(cb => cb.checked = checked); updateInspDeleteBtn(); }
@@ -629,7 +656,7 @@ async function bulkDeleteInspectors() {
   const ids = [...document.querySelectorAll('.insp-check:checked')].map(cb => parseInt(cb.value));
   if (ids.length === 0) return;
   if (!confirm(`Voulez-vous vraiment supprimer ${ids.length} inspecteur(s) ? Cette action est irr\u00e9versible.`)) return;
-  try { const data = await api('/inspectors/bulk-delete', { method: 'POST', body: JSON.stringify({ ids }) }); showMessage(data.message); loadInspectorsPage(); } catch (err) { showMessage(err.message, 'error'); }
+  try { const data = await api('/inspectors/bulk-delete', { method: 'POST', body: JSON.stringify({ ids }) }); showMessage(data.message); reloadKeepScroll(reloadInspectors); } catch (err) { showMessage(err.message, 'error'); }
 }
 
 // ===== EMAIL FORM =====
@@ -640,13 +667,111 @@ async function sendEmail(id) { try { const data = await api(`/inspectors/${id}/e
 
 // ===== ANALYTICS PAGE =====
 let analyticsCharts = [];
+let analyticsFilters = { etat: '', domaine: '', niveau: '', competence: '' };
 
-async function loadAnalyticsPage() {
+async function loadAnalyticsPage(keepFilters = false) {
+  if (!keepFilters) analyticsFilters = { etat: '', domaine: '', niveau: '', competence: '' };
   const container = document.getElementById('analytics-page');
   if (!container) return;
   container.innerHTML = `<div style="text-align:center;padding:3rem"><p>Chargement des donn\u00e9es d'analyse...</p></div>`;
-  try { const data = await api('/analytics'); renderAnalyticsContent(data); }
+  try {
+    const p = new URLSearchParams();
+    if (analyticsFilters.etat)       p.set('etat',       analyticsFilters.etat);
+    if (analyticsFilters.domaine)    p.set('domaine',    analyticsFilters.domaine);
+    if (analyticsFilters.niveau)     p.set('niveau',     analyticsFilters.niveau);
+    if (analyticsFilters.competence) p.set('competence', analyticsFilters.competence);
+    const qs = p.toString() ? '?' + p.toString() : '';
+    const data = await api('/analytics' + qs);
+    renderAnalyticsContent(data);
+  }
   catch (err) { if (err.message.includes('expir\u00e9e')) { logout(); return; } container.innerHTML = `<div class="alert alert-error">${err.message}</div>`; }
+}
+function setAnalyticsFilter(k, v) { analyticsFilters[k] = v; loadAnalyticsPage(true); }
+function resetAnalyticsFilters() { analyticsFilters = { etat:'', domaine:'', niveau:'', competence:'' }; loadAnalyticsPage(true); }
+
+function _analyticsQs() {
+  const p = new URLSearchParams();
+  if (analyticsFilters.etat)       p.set('etat', analyticsFilters.etat);
+  if (analyticsFilters.domaine)    p.set('domaine', analyticsFilters.domaine);
+  if (analyticsFilters.niveau)     p.set('niveau', analyticsFilters.niveau);
+  if (analyticsFilters.competence) p.set('competence', analyticsFilters.competence);
+  return p.toString();
+}
+
+async function downloadImportTemplate(kind) {
+  try {
+    const url = kind === 'formateurs' ? '/api/formateurs/import-template' : '/api/inspectors/import-template';
+    const res = await fetch(url, { headers: { 'Authorization': `Bearer ${state.token}` } });
+    if (!res.ok) { const t = await res.text(); throw new Error(t || 'Erreur téléchargement'); }
+    const blob = await res.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = kind === 'formateurs' ? 'modele_import_formateurs.xlsx' : 'modele_import_inspecteurs.xlsx';
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(a.href);
+  } catch (err) { showMessage('Erreur: ' + err.message, 'error'); }
+}
+
+async function exportAnalyticsStats(fmt) {
+  try {
+    const qs = _analyticsQs();
+    const res = await fetch(`/api/analytics/export/${fmt}${qs ? '?' + qs : ''}`, { headers: { 'Authorization': `Bearer ${state.token}` } });
+    if (!res.ok) { const t = await res.text(); throw new Error(t || 'Erreur export'); }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `statistiques.${fmt === 'excel' ? 'xlsx' : 'pdf'}`;
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  } catch (err) { showMessage('Erreur export: ' + err.message, 'error'); }
+}
+
+async function exportDashboardPDF() {
+  if (!window.jspdf || !window.html2canvas) { showMessage('Bibliothèques PDF non chargées', 'error'); return; }
+  showMessage('Génération du PDF en cours...');
+  try {
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF('p', 'mm', 'a4');
+    const pageW = pdf.internal.pageSize.getWidth();
+    const pageH = pdf.internal.pageSize.getHeight();
+    const margin = 10;
+    const usableW = pageW - margin * 2;
+    let y = margin;
+
+    // Titre
+    pdf.setFontSize(14); pdf.setTextColor(26, 54, 93);
+    pdf.text('UEMOA - Tableau de bord', pageW / 2, y + 6, { align: 'center' });
+    y += 10;
+    pdf.setFontSize(9); pdf.setTextColor(100, 100, 100); pdf.setFont(undefined, 'italic');
+    pdf.text('Exporté le ' + new Date().toLocaleDateString('fr-FR') + ' ' + new Date().toLocaleTimeString('fr-FR'), pageW / 2, y, { align: 'center' });
+    pdf.setFont(undefined, 'normal'); pdf.setTextColor(0, 0, 0);
+    y += 8;
+
+    // Capturer KPI grid
+    const kpi = document.querySelector('#analytics-page .kpi-grid');
+    if (kpi) {
+      const c = await html2canvas(kpi, { scale: 2, backgroundColor: '#ffffff' });
+      const ratio = c.width / c.height;
+      let w = usableW, h = w / ratio;
+      if (y + h > pageH - margin) { pdf.addPage(); y = margin; }
+      pdf.addImage(c.toDataURL('image/png'), 'PNG', margin, y, w, h);
+      y += h + 5;
+    }
+
+    // Capturer chaque chart-card individuellement (pour ne pas couper)
+    const cards = document.querySelectorAll('#analytics-page .chart-card');
+    for (const card of cards) {
+      const c = await html2canvas(card, { scale: 2, backgroundColor: '#ffffff' });
+      const ratio = c.width / c.height;
+      let w = usableW, h = w / ratio;
+      if (h > pageH - margin * 2) { h = pageH - margin * 2; w = h * ratio; }
+      if (y + h > pageH - margin) { pdf.addPage(); y = margin; }
+      const x = margin + (usableW - w) / 2;
+      pdf.addImage(c.toDataURL('image/png'), 'PNG', x, y, w, h);
+      y += h + 5;
+    }
+
+    pdf.save(`tableau_de_bord_${new Date().toISOString().slice(0,10)}.pdf`);
+    showMessage('PDF généré');
+  } catch (err) { showMessage('Erreur génération PDF: ' + err.message, 'error'); }
 }
 
 function renderAnalyticsContent(data) {
@@ -661,7 +786,7 @@ function renderAnalyticsContent(data) {
   const frmInsp = frm.inspecteurs || 0;
   const nbEtatsFrm = (frm.byState || []).length;
   container.innerHTML = `
-    <div class="page-header"><h2><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2" style="vertical-align:middle;margin-right:0.5rem"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg> Tableau de bord</h2></div>
+    <div class="page-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.5rem"><h2 style="margin:0"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2" style="vertical-align:middle;margin-right:0.5rem"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg> Tableau de bord</h2><div style="display:flex;gap:0.5rem;flex-wrap:wrap"><button class="btn btn-outline btn-sm" onclick="exportAnalyticsStats('excel')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#1a7f37" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> Statistiques Excel</button><button class="btn btn-outline btn-sm" onclick="exportAnalyticsStats('pdf')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> Statistiques PDF</button><button class="btn btn-primary btn-sm" onclick="exportDashboardPDF()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Exporter PDF</button></div></div>
     <div class="kpi-grid">
       <div class="kpi-card">
         <div class="kpi-icon" style="background:#ebf8ff">
@@ -688,6 +813,13 @@ function renderAnalyticsContent(data) {
         <div class="kpi-body"><div class="kpi-value">${frmInsp}</div><div class="kpi-label">Aussi inspecteurs</div></div>
       </div>
     </div>
+    <div class="filters-bar filters-compact analytics-filters" style="margin:0.75rem 0 1.25rem">
+      <select onchange="setAnalyticsFilter('etat',this.value)"><option value="">Tous les États</option>${ETATS.map(e=>`<option value="${e}" ${analyticsFilters.etat===e?'selected':''}>${e}</option>`).join('')}</select>
+      <select onchange="setAnalyticsFilter('domaine',this.value)"><option value="">Tous les Domaines</option>${DOMAINES.map(d=>`<option value="${d}" ${analyticsFilters.domaine===d?'selected':''}>${DOMAINE_LABELS[d]||d}</option>`).join('')}</select>
+      <select onchange="setAnalyticsFilter('niveau',this.value)"><option value="">Tous les Niveaux</option>${NIVEAUX.map(n=>`<option value="${n}" ${analyticsFilters.niveau===n?'selected':''}>${n}</option>`).join('')}</select>
+      <select onchange="setAnalyticsFilter('competence',this.value)"><option value="">Toutes Compétences</option>${FORMATEUR_TYPES.map(t=>`<option value="${t}" ${analyticsFilters.competence===t?'selected':''}>${t}</option>`).join('')}</select>
+      ${(analyticsFilters.etat||analyticsFilters.domaine||analyticsFilters.niveau||analyticsFilters.competence)?'<button class="btn btn-sm btn-outline" onclick="resetAnalyticsFilters()">Réinitialiser</button>':''}
+    </div>
     <h3 style="margin:1.5rem 0 0.5rem;color:var(--primary)">Inspecteurs</h3>
     <div class="analytics-grid">
       <div class="chart-card"><h4 class="chart-title">Inspecteurs par \u00c9tat</h4><div class="chart-wrapper"><canvas id="chart-state"></canvas></div></div>
@@ -695,6 +827,7 @@ function renderAnalyticsContent(data) {
       <div class="chart-card"><h4 class="chart-title">R\u00e9partition par Niveau</h4><div class="chart-wrapper"><canvas id="chart-level"></canvas></div></div>
       <div class="chart-card"><h4 class="chart-title">R\u00e9partition par Exp\u00e9rience</h4><div class="chart-wrapper"><canvas id="chart-exp"></canvas></div></div>
       <div class="chart-card chart-card-wide"><h4 class="chart-title">Domaines par \u00c9tat</h4><div class="chart-wrapper chart-wrapper-tall"><canvas id="chart-domain-state"></canvas></div></div>
+      <div class="chart-card chart-card-wide"><h4 class="chart-title">Niveaux par Domaines</h4><div class="chart-wrapper chart-wrapper-tall"><canvas id="chart-level-domain"></canvas></div></div>
       <div class="chart-card chart-card-wide"><h4 class="chart-title">Top 15 Sp\u00e9cialit\u00e9s</h4><div class="chart-wrapper chart-wrapper-tall"><canvas id="chart-speciality"></canvas></div></div>
     </div>
     <h3 style="margin:2rem 0 0.5rem;color:var(--primary)">Formateurs</h3>
@@ -720,6 +853,8 @@ function createAnalyticsCharts(data) {
   if (c4) analyticsCharts.push(new Chart(c4, { type:'bar', data:{ labels:data.byExperience.slice(0,10).map(d=>d.experience), datasets:[{ label:'Inspecteurs', data:data.byExperience.slice(0,10).map(d=>d.count), backgroundColor:cc.slice(0,data.byExperience.slice(0,10).length), borderRadius:6, maxBarThickness:40 }] }, options:{ indexAxis:'y', responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{x:{beginAtZero:true,ticks:{stepSize:1}}} } }));
   const c5 = document.getElementById('chart-domain-state');
   if (c5) { const sts=[...new Set(data.domainState.map(d=>d.etat))]; const doms=[...new Set(data.domainState.map(d=>d.domaine))]; const ds=doms.map((dom,i)=>({label:dom,data:sts.map(st=>{const m=data.domainState.find(d=>d.etat===st&&d.domaine===dom);return m?m.count:0;}),backgroundColor:DOMAINE_COLORS[dom]||cc[i],borderRadius:4,maxBarThickness:40})); analyticsCharts.push(new Chart(c5,{type:'bar',data:{labels:sts,datasets:ds},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom',labels:{padding:12,font:{size:11}}}},scales:{x:{stacked:true},y:{stacked:true,beginAtZero:true,ticks:{stepSize:5}}}}})); }
+  const cld = document.getElementById('chart-level-domain');
+  if (cld) { const ld=data.levelDomain||[]; const ld_doms=[...new Set(ld.map(d=>d.domaine))]; const ld_niv=[...new Set(ld.map(d=>d.niveau))]; const ld_nc=['#3182ce','#e53e3e','#38a169','#d69e2e','#805ad5','#dd6b20','#319795']; const ld_ds=ld_niv.filter(n=>n!=null).map((niv,i)=>({label:niv?(niv.length>22?niv.substring(0,22)+'...':niv):'(Non défini)',data:ld_doms.map(dom=>{const m=ld.find(d=>d.domaine===dom&&d.niveau===niv);return m?m.count:0;}),backgroundColor:ld_nc[i%ld_nc.length],borderRadius:4,maxBarThickness:50})); analyticsCharts.push(new Chart(cld,{type:'bar',data:{labels:ld_doms,datasets:ld_ds},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom',labels:{padding:12,font:{size:10}}}},scales:{x:{stacked:true},y:{stacked:true,beginAtZero:true,ticks:{stepSize:1}}}}})); }
   const c6 = document.getElementById('chart-speciality');
   if (c6) analyticsCharts.push(new Chart(c6, { type:'bar', data:{ labels:data.bySpeciality.map(d=>d.specialite.length>35?d.specialite.substring(0,35)+'...':d.specialite), datasets:[{ label:'Nombre', data:data.bySpeciality.map(d=>d.count), backgroundColor:'#38a169', borderRadius:6, maxBarThickness:35 }] }, options:{ indexAxis:'y', responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{x:{beginAtZero:true,ticks:{stepSize:5}}} } }));
 
@@ -748,10 +883,10 @@ function renderAccessContent(search = '') {
     <div id="access-msg"></div>
     <div class="page-header"><h2>Gestion des acc\u00e8s</h2><div class="header-actions" style="display:flex;gap:0.75rem;align-items:center"><input type="text" placeholder="Rechercher un utilisateur..." class="search-input" oninput="renderAccessContent(this.value)" value="${esc(search)}"><button class="btn btn-primary btn-sm" onclick="openCreateUserForm()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Cr\u00e9er un utilisateur</button></div></div>
     <div class="table-container"><table class="data-table">
-      <thead><tr><th>Utilisateur</th><th>Pr\u00e9noms</th><th>Nom complet</th><th>\u00c9tat</th><th>R\u00f4le</th><th>Statut</th><th>MdP</th><th>Derni\u00e8re connexion</th><th>Actions</th></tr></thead>
+      <thead><tr><th>Utilisateur</th><th style="display:none">Pr\u00e9noms</th><th>Nom complet</th><th>\u00c9tat</th><th>R\u00f4le</th><th>Statut</th><th>MdP</th><th>Derni\u00e8re connexion</th><th>Actions</th></tr></thead>
       <tbody>${filtered.map(u => `<tr class="${!u.is_active ? 'row-inactive' : ''}">
         <td><span class="username" onclick="editUserUsername(${u.id}, '${esc(u.username)}')" title="Modifier">${esc(u.username)}</span></td>
-        <td>${esc(u.prenom || '-')}</td>
+        <td style="display:none">${esc(u.prenom || '-')}</td>
         <td>${u.nom ? esc((u.prenom ? u.prenom + ' ' : '') + u.nom) : '-'}</td>
         <td>${esc(u.etat || '-')}</td>
         <td><select class="role-select" onchange="changeUserRole(${u.id}, this.value)" ${u.username === 'Admin' ? 'disabled' : ''}>${['National 2', 'National 1', 'R\u00e9gional', 'Administrateur'].map(r => `<option value="${r}" ${u.role === r ? 'selected' : ''}>${r}</option>`).join('')}</select></td>
@@ -796,7 +931,7 @@ function editUserInfo(id, currentNom, currentPrenom, currentEtat) {
         nom: document.getElementById('eui-nom').value,
         etat: document.getElementById('eui-etat').value
       })});
-      closeModal(); showAccessMsg('Informations mises \u00e0 jour'); loadAccessPage();
+      closeModal(); showAccessMsg('Informations mises \u00e0 jour'); reloadKeepScroll(loadAccessPage);
     } catch(err) { document.getElementById('edit-user-info-error').innerHTML = `<div class="alert alert-error">${err.message}</div>`; }
   });
 }
@@ -849,7 +984,7 @@ function openCreateUserForm() {
       const data = await api('/admin/users', { method: 'POST', body: JSON.stringify({ username, nom, etat, role }) });
       closeModal();
       showAccessMsg(data.message);
-      loadAccessPage();
+      reloadKeepScroll(loadAccessPage);
     } catch (err) { errDiv.innerHTML = `<div class="alert alert-error">${err.message}</div>`; }
   });
 }
@@ -917,7 +1052,7 @@ function openAddSettingForm() {
     e.preventDefault();
     try {
       await api('/settings', { method: 'POST', body: JSON.stringify({ category: settingsCategory, value: document.getElementById('s-value').value, label: document.getElementById('s-label')?.value || '' }) });
-      closeModal(); showSettingsMsg('Param\u00e8tre ajout\u00e9'); await refreshSettingsConstants(); loadSettingsPage();
+      closeModal(); showSettingsMsg('Param\u00e8tre ajout\u00e9'); await refreshSettingsConstants(); reloadKeepScroll(loadSettingsPage);
     } catch (err) { document.getElementById('setting-error').innerHTML = `<div class="alert alert-error">${err.message}</div>`; }
   });
 }
@@ -937,7 +1072,7 @@ function editSetting(id) {
     e.preventDefault();
     try {
       await api(`/settings/${id}`, { method: 'PUT', body: JSON.stringify({ value: document.getElementById('es-value').value, label: document.getElementById('es-label')?.value || '' }) });
-      closeModal(); showSettingsMsg('Param\u00e8tre modifi\u00e9'); await refreshSettingsConstants(); loadSettingsPage();
+      closeModal(); showSettingsMsg('Param\u00e8tre modifi\u00e9'); await refreshSettingsConstants(); reloadKeepScroll(loadSettingsPage);
     } catch (err) { document.getElementById('edit-setting-error').innerHTML = `<div class="alert alert-error">${err.message}</div>`; }
   });
 }
@@ -976,6 +1111,7 @@ let formateursData = { formateurs: [], total: 0, totalPages: 1 };
 let formateursStats = { total: 0, byState: [] };
 let frmFilters = { etat: '', competence: '', domaine: '', search: '', status: 'active' };
 let frmPage = 1;
+let frmPageSize = 50;
 let frmSort = { col: '', dir: 'asc' };
 
 async function loadFormateursPage() {
@@ -999,6 +1135,7 @@ function buildFrmFilterParams() {
   if (frmFilters.search) p.append('search', frmFilters.search);
   p.append('status', frmFilters.status);
   p.append('page', frmPage);
+  p.append('limit', frmPageSize);
   return p.toString();
 }
 
@@ -1041,14 +1178,14 @@ function renderFormateursContent() {
             <button onclick="exportFormateursFile('pdf')" class="export-item"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span>Export PDF</span><small>.pdf</small></button>
           </div>
         </div>
-        ${state.user?.role === 'Administrateur' ? `<button class="btn btn-outline btn-sm" onclick="document.getElementById('import-frm-file').click()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> Importer Excel</button><input type="file" id="import-frm-file" accept=".xlsx" style="display:none" onchange="importFormateurs(this)">` : ''}
+        ${state.user?.role === 'Administrateur' ? `<button class="btn btn-outline btn-sm" title="Télécharger le modèle Excel" onclick="downloadImportTemplate('formateurs')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Modèle</button><button class="btn btn-outline btn-sm" onclick="document.getElementById('import-frm-file').click()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> Importer Excel</button><input type="file" id="import-frm-file" accept=".xlsx" style="display:none" onchange="importFormateurs(this)">` : ''}
         ${canDeactivate ? `<button class="btn btn-sm" id="frm-delete-btn" style="background:#dc2626;color:white;display:none" onclick="bulkDeleteFormateurs()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-2 14H7L5 6"/></svg> Supprimer</button>` : ''}
         ${canAdd ? `<button class="btn btn-primary btn-sm" onclick="openFormateurForm()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Formateur</button>` : ''}
       </div>
     </div>
-    <div class="results-info"><span>${formateursData.total} formateur${formateursData.total > 1 ? 's' : ''} trouv\u00e9${formateursData.total > 1 ? 's' : ''}</span></div>
+    <div class="results-info" style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap"><span>${formateursData.total} formateur${formateursData.total > 1 ? 's' : ''} trouv\u00e9${formateursData.total > 1 ? 's' : ''}</span><label style="display:flex;align-items:center;gap:0.5rem;font-size:0.875rem">Afficher <select onchange="changeFrmPageSize(this.value)" style="padding:0.25rem 0.5rem">${[10,25,50,100,200].map(n=>`<option value="${n}" ${frmPageSize===n?'selected':''}>${n}</option>`).join('')}</select> par page</label></div>
     <div class="table-container"><table class="data-table">
-      <thead><tr>${canDeactivate ? '<th style="width:30px"><input type="checkbox" onchange="toggleAllFormateurs(this.checked)"></th>' : ''}<th class="sortable" onclick="frmSortBy('reference')">R\u00e9f.${frmSortIcon('reference')}</th><th class="sortable" onclick="frmSortBy('nom')">Nom et Pr\u00e9nom${frmSortIcon('nom')}</th><th class="sortable" onclick="frmSortBy('etat')">\u00c9tat${frmSortIcon('etat')}</th><th>Comp\u00e9tences</th><th class="sortable" onclick="frmSortBy('is_inspecteur')">Inspecteur${frmSortIcon('is_inspecteur')}</th><th>Actions</th></tr></thead>
+      <thead><tr>${canDeactivate ? '<th style="width:30px"><input type="checkbox" onchange="toggleAllFormateurs(this.checked)"></th>' : ''}<th class="sortable" style="display:none" onclick="frmSortBy('reference')">R\u00e9f.${frmSortIcon('reference')}</th><th class="sortable" onclick="frmSortBy('nom')">Nom et Pr\u00e9nom${frmSortIcon('nom')}</th><th class="sortable" onclick="frmSortBy('etat')">\u00c9tat${frmSortIcon('etat')}</th><th>Comp\u00e9tences</th><th class="sortable" onclick="frmSortBy('is_inspecteur')">Inspecteur${frmSortIcon('is_inspecteur')}</th><th>Actions</th></tr></thead>
       <tbody>
         ${formateursData.formateurs.length === 0 ? `<tr><td colspan="${canDeactivate ? 7 : 6}" class="text-center">Aucun formateur trouv\u00e9</td></tr>` :
           formateursData.formateurs.map(f => {
@@ -1056,7 +1193,7 @@ function renderFormateursContent() {
             const inactiveClass = !f.is_active ? ' row-inactive' : '';
             return `<tr class="${inactiveClass}">
               ${canDeactivate ? `<td><input type="checkbox" class="frm-check" value="${f.id}" onchange="updateFrmDeleteBtn()"></td>` : ''}
-              <td class="ref-cell">${f.reference}</td>
+              <td class="ref-cell" style="display:none">${f.reference}</td>
               <td>${esc(f.nom)} ${esc(f.prenom)}</td>
               <td><span class="state-badge">${esc(f.etat)}</span></td>
               <td class="specialite-cell" title="${esc(comps)}">${esc(comps)}</td>
@@ -1073,7 +1210,7 @@ function renderFormateursContent() {
           }).join('')}
       </tbody>
     </table></div>
-    ${formateursData.total > 50 ? `<div class="pagination"><button ${frmPage <= 1 ? 'disabled' : ''} onclick="frmChangePage(${frmPage - 1})">Pr\u00e9c\u00e9dent</button><span>Page ${frmPage} / ${formateursData.totalPages}</span><button ${frmPage >= formateursData.totalPages ? 'disabled' : ''} onclick="frmChangePage(${frmPage + 1})">Suivant</button></div>` : ''}
+    ${formateursData.totalPages > 1 ? `<div class="pagination"><button ${frmPage <= 1 ? 'disabled' : ''} onclick="frmChangePage(${frmPage - 1})">Pr\u00e9c\u00e9dent</button><span>Page ${frmPage} / ${formateursData.totalPages}</span><button ${frmPage >= formateursData.totalPages ? 'disabled' : ''} onclick="frmChangePage(${frmPage + 1})">Suivant</button></div>` : ''}
   `;
 }
 
@@ -1083,6 +1220,7 @@ let frmSearchTimeout;
 function frmSearchDebounced(value) { clearTimeout(frmSearchTimeout); frmSearchTimeout = setTimeout(() => { frmFilters.search = value; frmPage = 1; reloadFormateurs(); }, 300); }
 function frmResetFilters() { frmFilters = { etat: '', competence: '', domaine: '', search: '', status: 'active' }; frmPage = 1; reloadFormateurs(); }
 function frmChangePage(p) { frmPage = p; reloadFormateurs(); }
+function changeFrmPageSize(n) { frmPageSize = parseInt(n); frmPage = 1; reloadFormateurs(); }
 
 function frmSortIcon(col) {
   if (frmSort.col !== col) return ' <span style="opacity:0.3;font-size:0.7em">\u25B2\u25BC</span>';
@@ -1149,7 +1287,7 @@ async function bulkDeleteFormateurs() {
   const ids = [...document.querySelectorAll('.frm-check:checked')].map(cb => parseInt(cb.value));
   if (ids.length === 0) return;
   if (!confirm(`Voulez-vous vraiment supprimer ${ids.length} formateur(s) ? Cette action est irr\u00e9versible.`)) return;
-  try { const data = await api('/formateurs/bulk-delete', { method: 'POST', body: JSON.stringify({ ids }) }); showFrmMsg(data.message); loadFormateursPage(); } catch (err) { showFrmMsg(err.message, 'error'); }
+  try { const data = await api('/formateurs/bulk-delete', { method: 'POST', body: JSON.stringify({ ids }) }); showFrmMsg(data.message); reloadKeepScroll(reloadFormateurs); } catch (err) { showFrmMsg(err.message, 'error'); }
 }
 
 let frmCompetences = [{ type_competence: '', domaine: '' }];
@@ -1183,7 +1321,7 @@ function openFormateurForm(formateur = null) {
           <div class="form-group"><label>Pi\u00e8ce jointe (CV)</label><input type="file" id="frm-cv" accept=".pdf,.doc,.docx"></div>
         </div>
         <div class="form-row">
-          <div class="form-group"><label><input type="checkbox" id="frm-inspecteur" ${formateur?.is_inspecteur ? 'checked' : ''}> Ce formateur est aussi inspecteur</label></div>
+          <div class="form-group"><label style="display:flex;align-items:center;gap:0.5rem"><input type="checkbox" id="frm-inspecteur" ${formateur?.is_inspecteur ? 'checked' : ''}> Ce formateur est aussi inspecteur</label></div>
         </div>
         <h4 style="margin-top:1.5rem">Comp\u00e9tences <button type="button" class="btn btn-sm btn-outline" style="margin-left:1rem" onclick="addFrmComp()">+ Ajouter</button></h4>
         <div id="frm-comps-container">${renderFrmComps()}</div>
@@ -1221,7 +1359,7 @@ function openFormateurForm(formateur = null) {
       let data;
       try { data = JSON.parse(text); } catch(e) { throw new Error('R\u00e9ponse serveur invalide. V\u00e9rifiez votre session.'); }
       if (!res.ok) throw new Error(data.error || 'Erreur serveur');
-      closeModal(); showFrmMsg('Sauvegard\u00e9 avec succ\u00e8s'); loadFormateursPage();
+      closeModal(); showFrmMsg('Sauvegard\u00e9 avec succ\u00e8s'); reloadKeepScroll(reloadFormateurs);
     } catch (err) { errDiv.innerHTML = `<div class="alert alert-error">${err.message}</div>`; btn.disabled = false; btn.textContent = isEdit ? 'Modifier' : 'Ajouter'; }
   });
 }
@@ -1259,8 +1397,8 @@ function removeFrmFormation(type, i) {
 }
 
 async function editFormateur(id) { try { const f = await api(`/formateurs/${id}`); openFormateurForm(f); } catch (err) { showFrmMsg(err.message, 'error'); } }
-async function deactivateFormateur(id) { if (!confirm('Voulez-vous vraiment d\u00e9sactiver ce formateur ?')) return; try { await api(`/formateurs/${id}/deactivate`, { method: 'PUT' }); showFrmMsg('Formateur d\u00e9sactiv\u00e9'); loadFormateursPage(); } catch (err) { showFrmMsg(err.message, 'error'); } }
-async function activateFormateur(id) { if (!confirm('Voulez-vous vraiment r\u00e9activer ce formateur ?')) return; try { await api(`/formateurs/${id}/activate`, { method: 'PUT' }); showFrmMsg('Formateur r\u00e9activ\u00e9'); loadFormateursPage(); } catch (err) { showFrmMsg(err.message, 'error'); } }
+async function deactivateFormateur(id) { if (!confirm('Voulez-vous vraiment d\u00e9sactiver ce formateur ?')) return; try { await api(`/formateurs/${id}/deactivate`, { method: 'PUT' }); showFrmMsg('Formateur d\u00e9sactiv\u00e9'); reloadKeepScroll(reloadFormateurs); } catch (err) { showFrmMsg(err.message, 'error'); } }
+async function activateFormateur(id) { if (!confirm('Voulez-vous vraiment r\u00e9activer ce formateur ?')) return; try { await api(`/formateurs/${id}/activate`, { method: 'PUT' }); showFrmMsg('Formateur r\u00e9activ\u00e9'); reloadKeepScroll(reloadFormateurs); } catch (err) { showFrmMsg(err.message, 'error'); } }
 
 function openFrmEmailForm(id, email, name) {
   openModal(`<div class="modal-header"><h3>Envoyer un email \u00e0 ${esc(name)}</h3><button class="btn-close" onclick="closeModal()">&times;</button></div><div class="modal-body"><p class="text-muted">Destinataire: ${esc(email)}</p><div class="form-group"><label>Objet</label><input type="text" id="frm-email-subject" placeholder="Objet de l'email"></div><div class="form-group"><label>Message</label><textarea id="frm-email-body" rows="6" placeholder="Contenu du message..."></textarea></div><div class="modal-actions"><button class="btn btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-primary" onclick="sendFrmEmail(${id})">Envoyer</button></div></div>`);
@@ -1313,7 +1451,7 @@ async function importFormateurs(input) {
   try {
     const res = await fetch('/api/formateurs/import', { method: 'POST', headers: { 'Authorization': `Bearer ${state.token}` }, body: formData });
     const data = await res.json(); if (!res.ok) throw new Error(data.error);
-    showFrmMsg(data.message); loadFormateursPage();
+    showFrmMsg(data.message); reloadKeepScroll(reloadFormateurs);
   } catch (err) { showFrmMsg(err.message, 'error'); }
   input.value = '';
 }

@@ -923,6 +923,16 @@ textarea {
   padding: 0.5rem 0.75rem;
   margin-bottom: 0.5rem;
 }
+.filters-bar.analytics-filters {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+.filters-bar.analytics-filters select {
+  flex: 1;
+  min-width: 0;
+}
 .filters-row-inline {
   display: flex;
   align-items: center;

@@ -199,6 +199,7 @@ def init_db():
                 specialite TEXT NOT NULL,
                 niveau TEXT NOT NULL,
                 experience TEXT,
+                titularisation TEXT,
                 FOREIGN KEY (inspector_id) REFERENCES inspectors(id) ON DELETE CASCADE
             );
             CREATE TABLE IF NOT EXISTS activity_log (
@@ -292,6 +293,7 @@ def init_db():
                 specialite TEXT NOT NULL,
                 niveau TEXT NOT NULL,
                 experience TEXT,
+                titularisation TEXT,
                 FOREIGN KEY (inspector_id) REFERENCES inspectors(id) ON DELETE CASCADE
             );
             CREATE TABLE IF NOT EXISTS activity_log (
@@ -357,6 +359,9 @@ def init_db():
             db.execute("ALTER TABLE users ADD COLUMN user_etat TEXT")
         if 'user_prenom' not in cols:
             db.execute("ALTER TABLE users ADD COLUMN user_prenom TEXT")
+        qual_cols = [c[1] for c in db.execute("PRAGMA table_info(qualifications)").fetchall()]
+        if 'titularisation' not in qual_cols:
+            db.execute("ALTER TABLE qualifications ADD COLUMN titularisation TEXT")
         db.commit()
     # Create admin
     admin = db.execute("SELECT id FROM users WHERE username = 'Admin'").fetchone()
@@ -685,6 +690,8 @@ def list_inspectors():
 
     for ins in inspectors:
         ins['qualifications'] = [dict(q) for q in db.execute("SELECT * FROM qualifications WHERE inspector_id = ?", (ins['id'],)).fetchall()]
+        u = db.execute("SELECT id FROM users WHERE inspector_id = ?", (ins['id'],)).fetchone()
+        ins['has_user'] = bool(u)
 
     db.close()
     return jsonify({'inspectors': inspectors, 'total': total, 'page': page, 'totalPages': (total + limit - 1) // limit})
@@ -741,8 +748,8 @@ def add_inspector():
         quals = json.loads(qualifications_json)
         for q in quals:
             if q.get('domaine'):
-                db.execute("INSERT INTO qualifications (inspector_id, domaine, specialite, niveau, experience) VALUES (?, ?, ?, ?, ?)",
-                    (inspector_id, q['domaine'], q.get('specialite', ''), q.get('niveau', ''), q.get('experience', '')))
+                db.execute("INSERT INTO qualifications (inspector_id, domaine, specialite, niveau, experience, titularisation) VALUES (?, ?, ?, ?, ?, ?)",
+                    (inspector_id, q['domaine'], q.get('specialite', ''), q.get('niveau', ''), q.get('experience', ''), q.get('titularisation', '')))
 
         # Create user account with random password
         if email:
@@ -808,12 +815,41 @@ def update_inspector(id):
             db.execute("DELETE FROM qualifications WHERE inspector_id = ?", (id,))
             for q in json.loads(qualifications_json):
                 if q.get('domaine'):
-                    db.execute("INSERT INTO qualifications (inspector_id, domaine, specialite, niveau, experience) VALUES (?, ?, ?, ?, ?)",
-                        (id, q['domaine'], q.get('specialite', ''), q.get('niveau', ''), q.get('experience', '')))
+                    db.execute("INSERT INTO qualifications (inspector_id, domaine, specialite, niveau, experience, titularisation) VALUES (?, ?, ?, ?, ?, ?)",
+                        (id, q['domaine'], q.get('specialite', ''), q.get('niveau', ''), q.get('experience', ''), q.get('titularisation', '')))
 
         log_activity(db, request.user['id'], 'UPDATE_INSPECTOR', f"Modification: {ins['reference']}")
         db.commit()
         return jsonify({'message': 'Inspecteur modifié avec succès'})
+    except Exception as e:
+        db.rollback()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        db.close()
+
+@app.route('/api/inspectors/<int:id>/create-user', methods=['POST'])
+@auth_required
+def create_user_from_inspector(id):
+    if request.user['role'] != 'Administrateur':
+        return jsonify({'error': 'Non autorisé'}), 403
+    db = get_db()
+    try:
+        ins = db.execute("SELECT id, nom, prenom, email, etat FROM inspectors WHERE id = ?", (id,)).fetchone()
+        if not ins:
+            return jsonify({'error': 'Inspecteur introuvable'}), 404
+        if not ins['email']:
+            return jsonify({'error': "L'email de l'inspecteur n'est pas renseigné. Veuillez d'abord renseigner l'email."}), 400
+        existing = db.execute("SELECT id FROM users WHERE inspector_id = ? OR username = ?", (id, ins['email'])).fetchone()
+        if existing:
+            return jsonify({'error': 'Un compte utilisateur existe déjà pour cet inspecteur ou cet email'}), 400
+        chars = string.ascii_letters + string.digits
+        auto_pw = ''.join(random.choices(chars, k=10))
+        pw = bcrypt.hashpw(auto_pw.encode(), bcrypt.gensalt()).decode()
+        db.execute("INSERT INTO users (username, password, role, must_change_password, inspector_id, user_nom, user_prenom, user_etat) VALUES (?, ?, 'National 2', 1, ?, ?, ?, ?)",
+                   (ins['email'], pw, id, ins['nom'], ins['prenom'], ins['etat']))
+        log_activity(db, request.user['id'], 'CREATE_USER', f"Création compte utilisateur: {ins['email']} (MdP: {auto_pw})")
+        db.commit()
+        return jsonify({'message': 'Compte utilisateur créé avec succès', 'username': ins['email'], 'password': auto_pw})
     except Exception as e:
         db.rollback()
         return jsonify({'error': str(e)}), 500
@@ -864,6 +900,86 @@ def bulk_delete_inspectors():
     db.close()
     return jsonify({'message': f'{len(ids)} inspecteur(s) supprimé(s) avec succès'})
 
+def _build_import_template(title, headers, sample_rows, instructions):
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = 'Modele'
+    n = len(headers)
+    last_col = get_column_letter(n)
+    # Title
+    ws.merge_cells(f'A1:{last_col}1')
+    c = ws['A1']; c.value = title
+    c.font = Font(name='Calibri', bold=True, size=14, color='1A365D')
+    c.alignment = Alignment(horizontal='center', vertical='center')
+    ws.row_dimensions[1].height = 30
+    # Instructions
+    ws.merge_cells(f'A2:{last_col}2')
+    c = ws['A2']; c.value = instructions
+    c.font = Font(italic=True, size=9, color='666666')
+    c.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    ws.row_dimensions[2].height = 24
+    # Empty row
+    ws.row_dimensions[3].height = 8
+    # Headers (row 4)
+    header_font = Font(bold=True, color='FFFFFF', size=11)
+    header_fill = PatternFill(start_color='1A365D', end_color='1A365D', fill_type='solid')
+    header_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    thin = Border(left=Side(style='thin', color='D0D0D0'), right=Side(style='thin', color='D0D0D0'),
+                  top=Side(style='thin', color='D0D0D0'), bottom=Side(style='thin', color='D0D0D0'))
+    for ci, h in enumerate(headers, 1):
+        cell = ws.cell(row=4, column=ci, value=h)
+        cell.font = header_font; cell.fill = header_fill; cell.alignment = header_align; cell.border = thin
+    ws.row_dimensions[4].height = 32
+    # Sample rows (start row 5 — l'import lit à partir de la ligne 5)
+    for ri, row in enumerate(sample_rows, 5):
+        for ci, v in enumerate(row, 1):
+            cell = ws.cell(row=ri, column=ci, value=v)
+            cell.border = thin
+    # Column widths
+    for ci in range(1, n + 1):
+        ws.column_dimensions[get_column_letter(ci)].width = 22
+    out = io.BytesIO(); wb.save(out); out.seek(0)
+    return out
+
+@app.route('/api/inspectors/import-template', methods=['GET'])
+@auth_required
+def import_template_inspectors():
+    if request.user['role'] != 'Administrateur':
+        return jsonify({'error': 'Non autorise'}), 403
+    headers = ['Référence (laisser vide)', 'Nom *', 'Prénom *', 'État *', 'Email', 'Téléphone',
+               'Domaine', 'Spécialité', 'Niveau', 'Expérience', 'Titularisation (AAAA-MM)']
+    samples = [
+        ('', 'DUPONT', 'Jean', 'Bénin', 'jean.dupont@example.com', '+229 90000000',
+         'OPS', 'Pilote ATR-72', 'Inspecteur Senior', '10 ans', '2018-03'),
+        ('', 'KONE', 'Awa', 'Côte d\'Ivoire', 'awa.kone@example.com', '+225 0700000000',
+         'AIR', 'Contrôle technique', 'Inspecteur Stagiaire', '2 ans', ''),
+    ]
+    instr = ('Lignes 1-4 = en-tête (ne pas modifier). Données à partir de la ligne 5. '
+             'Champs marqués * obligatoires. Titularisation au format AAAA-MM (vide pour stagiaires).')
+    out = _build_import_template('Modèle d\'import - Inspecteurs', headers, samples, instr)
+    return send_file(out, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                     as_attachment=True, download_name='modele_import_inspecteurs.xlsx')
+
+@app.route('/api/formateurs/import-template', methods=['GET'])
+@auth_required
+def import_template_formateurs():
+    if request.user['role'] != 'Administrateur':
+        return jsonify({'error': 'Non autorise'}), 403
+    headers = ['Référence (laisser vide)', 'Nom *', 'Prénom *', 'État *', 'Email', 'Téléphone',
+               'Aussi inspecteur (Oui/Non)', 'Type compétence', 'Domaine compétence',
+               'Formations délivrées (séparées par ;)', 'Formations développées (séparées par ;)']
+    samples = [
+        ('', 'TRAORE', 'Issa', 'Burkina Faso', 'issa.traore@example.com', '+226 70000000',
+         'Oui', 'Formateur National', 'OPS', 'Sécurité aérienne 2024;CRM avancé', 'Module Facteurs Humains'),
+        ('', 'MENSAH', 'Adjoa', 'Togo', 'adjoa.mensah@example.com', '+228 90000000',
+         'Non', 'Formateur Régional', 'AIR', '', ''),
+    ]
+    instr = ('Lignes 1-4 = en-tête (ne pas modifier). Données à partir de la ligne 5. '
+             'Champs marqués * obligatoires. Plusieurs formations séparées par un point-virgule (;).')
+    out = _build_import_template('Modèle d\'import - Formateurs', headers, samples, instr)
+    return send_file(out, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                     as_attachment=True, download_name='modele_import_formateurs.xlsx')
+
 @app.route('/api/inspectors/import', methods=['POST'])
 @auth_required
 def import_inspectors():
@@ -890,6 +1006,13 @@ def import_inspectors():
             specialite = str(row[7] or '').strip()
             niveau = str(row[8] or '').strip()
             experience = str(row[9] or '').strip()
+            titularisation = ''
+            if len(row) > 10 and row[10]:
+                tv = row[10]
+                if hasattr(tv, 'strftime'):
+                    titularisation = tv.strftime('%Y-%m')
+                else:
+                    titularisation = str(tv).strip()[:7]
             if not nom or not etat:
                 continue
             existing = db.execute("SELECT id FROM inspectors WHERE nom = ? AND prenom = ? AND etat = ?", (nom, prenom, etat)).fetchone()
@@ -908,8 +1031,8 @@ def import_inspectors():
                                (email, hashed, ins_id))
                 count += 1
             if domaine:
-                db.execute("INSERT INTO qualifications (inspector_id, domaine, specialite, niveau, experience) VALUES (?, ?, ?, ?, ?)",
-                           (ins_id, domaine, specialite, niveau, experience))
+                db.execute("INSERT INTO qualifications (inspector_id, domaine, specialite, niveau, experience, titularisation) VALUES (?, ?, ?, ?, ?, ?)",
+                           (ins_id, domaine, specialite, niveau, experience, titularisation))
         log_activity(db, request.user['id'], 'IMPORT', f"Import Excel: {count} nouveaux inspecteurs")
         db.commit()
         db.close()
@@ -1226,73 +1349,129 @@ def export_pdf():
 
 
 # ===== ANALYTICS ROUTES =====
-@app.route('/api/analytics', methods=['GET'])
-@auth_required
-def analytics_data():
-    if request.user.get('role') == 'National 2':
-        return jsonify({'error': 'Non autorise'}), 403
-    db = get_db()
-    # Inspectors by state
-    by_state = [dict(r) for r in db.execute("""
-        SELECT etat, COUNT(*) as count FROM inspectors WHERE is_active = 1 GROUP BY etat ORDER BY count DESC
-    """).fetchall()]
-    # By domain
-    by_domain = [dict(r) for r in db.execute("""
-        SELECT q.domaine, COUNT(DISTINCT q.inspector_id) as count
-        FROM qualifications q JOIN inspectors i ON q.inspector_id = i.id
-        WHERE i.is_active = 1 GROUP BY q.domaine ORDER BY count DESC
-    """).fetchall()]
-    # By level
-    by_level = [dict(r) for r in db.execute("""
-        SELECT TRIM(q.niveau) as niveau, COUNT(*) as count
-        FROM qualifications q JOIN inspectors i ON q.inspector_id = i.id
-        WHERE i.is_active = 1 GROUP BY TRIM(q.niveau) ORDER BY count DESC
-    """).fetchall()]
-    # By experience range
-    by_exp = [dict(r) for r in db.execute("""
-        SELECT q.experience, COUNT(*) as count
-        FROM qualifications q JOIN inspectors i ON q.inspector_id = i.id
-        WHERE i.is_active = 1 AND q.experience != '' AND q.experience IS NOT NULL
-        GROUP BY q.experience ORDER BY count DESC
-    """).fetchall()]
-    # Domain by state (cross-tab)
-    domain_state = [dict(r) for r in db.execute("""
-        SELECT i.etat, q.domaine, COUNT(DISTINCT q.inspector_id) as count
-        FROM qualifications q JOIN inspectors i ON q.inspector_id = i.id
-        WHERE i.is_active = 1 GROUP BY i.etat, q.domaine ORDER BY i.etat, q.domaine
-    """).fetchall()]
-    # Specialty distribution
-    by_speciality = [dict(r) for r in db.execute("""
-        SELECT SUBSTR(q.specialite, 1, 40) as specialite, COUNT(*) as count
-        FROM qualifications q JOIN inspectors i ON q.inspector_id = i.id
-        WHERE i.is_active = 1 GROUP BY SUBSTR(q.specialite, 1, 40) ORDER BY count DESC LIMIT 15
-    """).fetchall()]
-    # Formateurs analytics
-    frm_total = db.execute("SELECT COUNT(*) as count FROM formateurs WHERE is_active = 1").fetchone()['count']
-    frm_by_state = [dict(r) for r in db.execute("""
-        SELECT etat, COUNT(*) as count FROM formateurs WHERE is_active = 1 GROUP BY etat ORDER BY count DESC
-    """).fetchall()]
-    frm_by_competence = [dict(r) for r in db.execute("""
-        SELECT fc.type_competence, COUNT(DISTINCT fc.formateur_id) as count
-        FROM formateur_competences fc JOIN formateurs f ON fc.formateur_id = f.id
-        WHERE f.is_active = 1 GROUP BY fc.type_competence ORDER BY count DESC
-    """).fetchall()]
-    frm_by_domaine = [dict(r) for r in db.execute("""
-        SELECT fc.domaine, COUNT(DISTINCT fc.formateur_id) as count
-        FROM formateur_competences fc JOIN formateurs f ON fc.formateur_id = f.id
-        WHERE f.is_active = 1 AND fc.domaine IS NOT NULL AND fc.domaine != ''
-        GROUP BY fc.domaine ORDER BY count DESC
-    """).fetchall()]
-    frm_inspecteurs = db.execute("SELECT COUNT(*) as count FROM formateurs WHERE is_active = 1 AND is_inspecteur = 1").fetchone()['count']
-    frm_comp_state = [dict(r) for r in db.execute("""
-        SELECT f.etat, fc.type_competence, COUNT(DISTINCT fc.formateur_id) as count
-        FROM formateur_competences fc JOIN formateurs f ON fc.formateur_id = f.id
-        WHERE f.is_active = 1 GROUP BY f.etat, fc.type_competence ORDER BY f.etat
-    """).fetchall()]
-    db.close()
-    return jsonify({
+def _compute_analytics(db, f_etat, f_domaine, f_niveau, f_competence):
+
+    # --- Inspector filter conditions (qual-joined queries) ---
+    q_conds  = ["i.is_active = 1"]
+    q_params = []
+    if f_etat:    q_conds.append("i.etat = ?");         q_params.append(f_etat)
+    if f_domaine: q_conds.append("q.domaine = ?");       q_params.append(f_domaine)
+    if f_niveau:  q_conds.append("TRIM(q.niveau) = ?");  q_params.append(f_niveau)
+    q_where = " AND ".join(q_conds)
+
+    # by_state: no qual join unless domaine/niveau filter active
+    if f_domaine or f_niveau:
+        by_state = [dict(r) for r in db.execute(
+            "SELECT i.etat, COUNT(DISTINCT i.id) as count FROM qualifications q"
+            " JOIN inspectors i ON q.inspector_id=i.id"
+            " WHERE " + q_where + " GROUP BY i.etat ORDER BY count DESC",
+            q_params).fetchall()]
+    else:
+        s_conds  = ["is_active = 1"]
+        s_params = []
+        if f_etat: s_conds.append("etat = ?"); s_params.append(f_etat)
+        by_state = [dict(r) for r in db.execute(
+            "SELECT etat, COUNT(*) as count FROM inspectors WHERE " +
+            " AND ".join(s_conds) + " GROUP BY etat ORDER BY count DESC",
+            s_params).fetchall()]
+
+    by_domain = [dict(r) for r in db.execute(
+        "SELECT q.domaine, COUNT(DISTINCT q.inspector_id) as count"
+        " FROM qualifications q JOIN inspectors i ON q.inspector_id = i.id"
+        " WHERE " + q_where + " GROUP BY q.domaine ORDER BY count DESC",
+        q_params).fetchall()]
+
+    by_level = [dict(r) for r in db.execute(
+        "SELECT TRIM(q.niveau) as niveau, COUNT(*) as count"
+        " FROM qualifications q JOIN inspectors i ON q.inspector_id = i.id"
+        " WHERE " + q_where + " GROUP BY TRIM(q.niveau) ORDER BY count DESC",
+        q_params).fetchall()]
+
+    by_exp = [dict(r) for r in db.execute(
+        "SELECT q.experience, COUNT(*) as count"
+        " FROM qualifications q JOIN inspectors i ON q.inspector_id = i.id"
+        " WHERE " + q_where + " AND q.experience != '' AND q.experience IS NOT NULL"
+        " GROUP BY q.experience ORDER BY count DESC",
+        q_params).fetchall()]
+
+    domain_state = [dict(r) for r in db.execute(
+        "SELECT i.etat, q.domaine, COUNT(DISTINCT q.inspector_id) as count"
+        " FROM qualifications q JOIN inspectors i ON q.inspector_id = i.id"
+        " WHERE " + q_where + " GROUP BY i.etat, q.domaine ORDER BY i.etat, q.domaine",
+        q_params).fetchall()]
+
+    by_speciality = [dict(r) for r in db.execute(
+        "SELECT SUBSTR(q.specialite, 1, 40) as specialite, COUNT(*) as count"
+        " FROM qualifications q JOIN inspectors i ON q.inspector_id = i.id"
+        " WHERE " + q_where + " GROUP BY SUBSTR(q.specialite, 1, 40) ORDER BY count DESC LIMIT 15",
+        q_params).fetchall()]
+
+    # Niveaux par Domaines (cross-tab)
+    level_domain = [dict(r) for r in db.execute(
+        "SELECT q.domaine, TRIM(q.niveau) as niveau, COUNT(DISTINCT q.inspector_id) as count"
+        " FROM qualifications q JOIN inspectors i ON q.inspector_id = i.id"
+        " WHERE " + q_where + " GROUP BY q.domaine, TRIM(q.niveau) ORDER BY q.domaine, TRIM(q.niveau)",
+        q_params).fetchall()]
+
+    # --- Formateurs analytics ---
+    # Conditions pour requêtes simples (sans JOIN, pas d'alias)
+    fs_conds  = ["is_active = 1"]
+    fs_params = []
+    if f_etat: fs_conds.append("etat = ?"); fs_params.append(f_etat)
+    fs_where = " AND ".join(fs_conds)
+    # Conditions pour requêtes avec JOIN formateur_competences (alias f)
+    fj_conds  = ["f.is_active = 1"]
+    fj_params = []
+    if f_etat: fj_conds.append("f.etat = ?"); fj_params.append(f_etat)
+    if f_competence: fj_conds.append("fc.type_competence = ?"); fj_params.append(f_competence)
+    fj_where = " AND ".join(fj_conds)
+
+    if f_competence:
+        frm_total = db.execute(
+            "SELECT COUNT(DISTINCT f.id) as count"
+            " FROM formateur_competences fc JOIN formateurs f ON fc.formateur_id = f.id"
+            " WHERE " + fj_where, fj_params).fetchone()['count']
+        frm_by_state = [dict(r) for r in db.execute(
+            "SELECT f.etat, COUNT(DISTINCT f.id) as count"
+            " FROM formateur_competences fc JOIN formateurs f ON fc.formateur_id = f.id"
+            " WHERE " + fj_where + " GROUP BY f.etat ORDER BY count DESC",
+            fj_params).fetchall()]
+        frm_inspecteurs = db.execute(
+            "SELECT COUNT(DISTINCT f.id) as count"
+            " FROM formateur_competences fc JOIN formateurs f ON fc.formateur_id = f.id"
+            " WHERE " + fj_where + " AND f.is_inspecteur = 1",
+            fj_params).fetchone()['count']
+    else:
+        frm_total       = db.execute("SELECT COUNT(*) as count FROM formateurs WHERE " + fs_where, fs_params).fetchone()['count']
+        frm_by_state    = [dict(r) for r in db.execute("SELECT etat, COUNT(*) as count FROM formateurs WHERE " + fs_where + " GROUP BY etat ORDER BY count DESC", fs_params).fetchall()]
+        frm_inspecteurs = db.execute("SELECT COUNT(*) as count FROM formateurs WHERE " + fs_where + " AND is_inspecteur = 1", fs_params).fetchone()['count']
+
+    fc_cond   = fj_where
+    fc_params = fj_params
+
+    frm_by_competence = [dict(r) for r in db.execute(
+        "SELECT fc.type_competence, COUNT(DISTINCT fc.formateur_id) as count"
+        " FROM formateur_competences fc JOIN formateurs f ON fc.formateur_id = f.id"
+        " WHERE " + fc_cond + " GROUP BY fc.type_competence ORDER BY count DESC",
+        fc_params).fetchall()]
+
+    frm_by_domaine = [dict(r) for r in db.execute(
+        "SELECT fc.domaine, COUNT(DISTINCT fc.formateur_id) as count"
+        " FROM formateur_competences fc JOIN formateurs f ON fc.formateur_id = f.id"
+        " WHERE " + fc_cond + " AND fc.domaine IS NOT NULL AND fc.domaine != ''"
+        " GROUP BY fc.domaine ORDER BY count DESC",
+        fc_params).fetchall()]
+
+    frm_comp_state = [dict(r) for r in db.execute(
+        "SELECT f.etat, fc.type_competence, COUNT(DISTINCT fc.formateur_id) as count"
+        " FROM formateur_competences fc JOIN formateurs f ON fc.formateur_id = f.id"
+        " WHERE " + fc_cond + " GROUP BY f.etat, fc.type_competence ORDER BY f.etat",
+        fc_params).fetchall()]
+
+    return {
         'byState': by_state, 'byDomain': by_domain, 'byLevel': by_level,
         'byExperience': by_exp, 'domainState': domain_state, 'bySpeciality': by_speciality,
+        'levelDomain': level_domain,
         'formateurs': {
             'total': frm_total,
             'byState': frm_by_state,
@@ -1301,7 +1480,136 @@ def analytics_data():
             'inspecteurs': frm_inspecteurs,
             'competenceState': frm_comp_state
         }
-    })
+    }
+
+@app.route('/api/analytics', methods=['GET'])
+@auth_required
+def analytics_data():
+    if request.user.get('role') == 'National 2':
+        return jsonify({'error': 'Non autorise'}), 403
+    db = get_db()
+    try:
+        payload = _compute_analytics(db,
+            request.args.get('etat', '').strip(),
+            request.args.get('domaine', '').strip(),
+            request.args.get('niveau', '').strip(),
+            request.args.get('competence', '').strip())
+        return jsonify(payload)
+    finally:
+        db.close()
+
+@app.route('/api/analytics/export/<fmt>', methods=['GET'])
+@auth_required
+def export_analytics(fmt):
+    if request.user.get('role') == 'National 2':
+        return jsonify({'error': 'Non autorise'}), 403
+    if fmt not in ('excel', 'pdf'):
+        return jsonify({'error': 'Format invalide'}), 400
+    db = get_db()
+    try:
+        d = _compute_analytics(db,
+            request.args.get('etat', '').strip(),
+            request.args.get('domaine', '').strip(),
+            request.args.get('niveau', '').strip(),
+            request.args.get('competence', '').strip())
+    finally:
+        db.close()
+
+    sections = [
+        ('Inspecteurs par État',      ['État', 'Nombre'],     [(r['etat'], r['count']) for r in d['byState']]),
+        ('Inspecteurs par Domaine',   ['Domaine', 'Nombre'],  [(r['domaine'], r['count']) for r in d['byDomain']]),
+        ('Répartition par Niveau',    ['Niveau', 'Nombre'],   [(r['niveau'], r['count']) for r in d['byLevel']]),
+        ('Répartition par Expérience', ['Expérience', 'Nombre'], [(r['experience'], r['count']) for r in d['byExperience']]),
+        ('Domaines par État',         ['État', 'Domaine', 'Nombre'], [(r['etat'], r['domaine'], r['count']) for r in d['domainState']]),
+        ('Niveaux par Domaines',      ['Domaine', 'Niveau', 'Nombre'], [(r['domaine'], r['niveau'], r['count']) for r in d['levelDomain']]),
+        ('Top 15 Spécialités',        ['Spécialité', 'Nombre'], [(r['specialite'], r['count']) for r in d['bySpeciality']]),
+        ('Formateurs par État',       ['État', 'Nombre'],     [(r['etat'], r['count']) for r in d['formateurs']['byState']]),
+        ('Formateurs par Compétence', ['Compétence', 'Nombre'], [(r['type_competence'], r['count']) for r in d['formateurs']['byCompetence']]),
+        ('Formateurs par Domaine',    ['Domaine', 'Nombre'], [(r['domaine'], r['count']) for r in d['formateurs']['byDomaine']]),
+        ('Compétences par État',      ['État', 'Compétence', 'Nombre'], [(r['etat'], r['type_competence'], r['count']) for r in d['formateurs']['competenceState']]),
+    ]
+    today = datetime.now().strftime('%Y%m%d_%H%M')
+
+    if fmt == 'excel':
+        wb = openpyxl.Workbook()
+        wb.remove(wb.active)
+        header_font = Font(name='Calibri', bold=True, color='FFFFFF', size=11)
+        header_fill = PatternFill(start_color='1A365D', end_color='1A365D', fill_type='solid')
+        header_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        thin = Border(left=Side(style='thin', color='D0D0D0'), right=Side(style='thin', color='D0D0D0'),
+                      top=Side(style='thin', color='D0D0D0'), bottom=Side(style='thin', color='D0D0D0'))
+        for title, headers, rows in sections:
+            ws = wb.create_sheet(title=title[:31])
+            ws.cell(row=1, column=1, value=title).font = Font(bold=True, size=13, color='1A365D')
+            ws.cell(row=2, column=1, value='Exporté le ' + datetime.now().strftime(_DT_FMT)).font = Font(italic=True, size=9, color='666666')
+            for ci, h in enumerate(headers, 1):
+                c = ws.cell(row=4, column=ci, value=h)
+                c.font = header_font; c.fill = header_fill; c.alignment = header_align; c.border = thin
+            for ri, row in enumerate(rows, 5):
+                for ci, val in enumerate(row, 1):
+                    c = ws.cell(row=ri, column=ci, value=val)
+                    c.border = thin
+            for ci in range(1, len(headers) + 1):
+                ws.column_dimensions[get_column_letter(ci)].width = 28 if ci == 1 else 16
+        out = io.BytesIO(); wb.save(out); out.seek(0)
+        return send_file(out, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                         as_attachment=True, download_name=f'statistiques_{today}.xlsx')
+
+    # PDF
+    pdf = FPDF(orientation='P', unit='mm', format='A4')
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+    pdf.set_font('Helvetica', 'B', 16)
+    pdf.cell(0, 10, 'UEMOA - Statistiques Inspecteurs et Formateurs', ln=1, align='C')
+    pdf.set_font('Helvetica', 'I', 9)
+    pdf.cell(0, 6, 'Exporté le ' + datetime.now().strftime(_DT_FMT), ln=1, align='C')
+    pdf.ln(4)
+    for title, headers, rows in sections:
+        # Estimer hauteur nécessaire pour ne pas couper le tableau
+        needed = 12 + 8 + 7 * (len(rows) + 1) + 6
+        if pdf.get_y() + needed > pdf.h - 15:
+            pdf.add_page()
+        pdf.set_font('Helvetica', 'B', 12)
+        pdf.set_text_color(26, 54, 93)
+        pdf.cell(0, 8, title, ln=1)
+        pdf.set_text_color(0, 0, 0)
+        pdf.set_font('Helvetica', 'B', 9)
+        pdf.set_fill_color(26, 54, 93); pdf.set_text_color(255, 255, 255)
+        col_count = len(headers)
+        avail = pdf.w - 30
+        widths = [avail * 0.55] + [avail * 0.45 / (col_count - 1)] * (col_count - 1) if col_count > 1 else [avail]
+        if col_count == 3:
+            widths = [avail * 0.40, avail * 0.40, avail * 0.20]
+        for h, w in zip(headers, widths):
+            pdf.cell(w, 7, str(h), border=1, align='C', fill=True)
+        pdf.ln()
+        pdf.set_text_color(0, 0, 0); pdf.set_font('Helvetica', '', 9); pdf.set_fill_color(247, 250, 252)
+        alt = False
+        for row in rows:
+            if pdf.get_y() + 7 > pdf.h - 15:
+                pdf.add_page()
+                pdf.set_font('Helvetica', 'B', 9)
+                pdf.set_fill_color(26, 54, 93); pdf.set_text_color(255, 255, 255)
+                for h, w in zip(headers, widths):
+                    pdf.cell(w, 7, str(h), border=1, align='C', fill=True)
+                pdf.ln()
+                pdf.set_text_color(0, 0, 0); pdf.set_font('Helvetica', '', 9); pdf.set_fill_color(247, 250, 252)
+            for v, w in zip(row, widths):
+                txt = str(v) if v is not None else ''
+                if len(txt) > 60: txt = txt[:57] + '...'
+                try:
+                    pdf.cell(w, 7, txt, border=1, fill=alt)
+                except Exception:
+                    pdf.cell(w, 7, txt.encode('latin-1', 'replace').decode('latin-1'), border=1, fill=alt)
+            pdf.ln(); alt = not alt
+        pdf.ln(4)
+    raw = pdf.output(dest='S')
+    if isinstance(raw, str):
+        raw = raw.encode('latin-1')
+    elif isinstance(raw, bytearray):
+        raw = bytes(raw)
+    out = io.BytesIO(raw); out.seek(0)
+    return send_file(out, mimetype='application/pdf', as_attachment=True, download_name=f'statistiques_{today}.pdf')
 
 # ===== ADMIN ROUTES =====
 @app.route('/api/admin/users', methods=['GET'])
@@ -2119,15 +2427,32 @@ def import_formateurs():
             etat = str(row[3] or '').strip()
             email = str(row[4] or '').strip()
             telephone = str(row[5] or '').strip()
+            is_insp_raw = str(row[6] if len(row) > 6 else '').strip().lower()
+            type_competence = str(row[7] if len(row) > 7 else '').strip()
+            comp_domaine = str(row[8] if len(row) > 8 else '').strip()
+            f_delivrees = str(row[9] if len(row) > 9 else '').strip()
+            f_developpees = str(row[10] if len(row) > 10 else '').strip()
             if not nom or not etat:
                 continue
+            is_insp = 1 if is_insp_raw in ('oui', '1', 'yes', 'true') else 0
             existing = db.execute("SELECT id FROM formateurs WHERE nom = ? AND prenom = ? AND etat = ?", (nom, prenom, etat)).fetchone()
-            if not existing:
+            if existing:
+                f_id = existing['id']
+                db.execute("UPDATE formateurs SET email = ?, telephone = ?, is_inspecteur = ?, updated_at = datetime('now') WHERE id = ?",
+                           (email, telephone, is_insp, f_id))
+            else:
                 ref = generate_formateur_reference(db)
-                is_insp = 1 if str(row[7] or '').strip().lower() in ('oui', '1', 'yes') else 0
                 db.execute("INSERT INTO formateurs (reference, nom, prenom, etat, email, telephone, is_inspecteur) VALUES (?, ?, ?, ?, ?, ?, ?)",
                            (ref, nom, prenom, etat, email, telephone, is_insp))
+                f_id = db.lastrowid
                 count += 1
+            if type_competence:
+                db.execute("INSERT INTO formateur_competences (formateur_id, type_competence, domaine) VALUES (?, ?, ?)",
+                           (f_id, type_competence, comp_domaine or None))
+            for desc in [s.strip() for s in f_delivrees.split(';') if s.strip()]:
+                db.execute("INSERT INTO formateur_formations (formateur_id, type, description) VALUES (?, 'delivree', ?)", (f_id, desc))
+            for desc in [s.strip() for s in f_developpees.split(';') if s.strip()]:
+                db.execute("INSERT INTO formateur_formations (formateur_id, type, description) VALUES (?, 'developpee', ?)", (f_id, desc))
         log_activity(db, request.user['id'], 'IMPORT_FORMATEURS', f"Import Excel: {count} nouveaux formateurs")
         db.commit()
         db.close()
