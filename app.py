@@ -175,6 +175,7 @@ def init_db():
                 inspector_id INTEGER,
                 user_nom TEXT,
                 user_etat TEXT,
+                user_prenom TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
@@ -348,12 +349,14 @@ def init_db():
                 FOREIGN KEY (formateur_id) REFERENCES formateurs(id) ON DELETE CASCADE
             );
         """)
-        # Migrate: add user_nom and user_etat columns if missing
+        # Migrate: add columns if missing
         cols = [c[1] for c in db.execute("PRAGMA table_info(users)").fetchall()]
         if 'user_nom' not in cols:
             db.execute("ALTER TABLE users ADD COLUMN user_nom TEXT")
         if 'user_etat' not in cols:
             db.execute("ALTER TABLE users ADD COLUMN user_etat TEXT")
+        if 'user_prenom' not in cols:
+            db.execute("ALTER TABLE users ADD COLUMN user_prenom TEXT")
         db.commit()
     # Create admin
     admin = db.execute("SELECT id FROM users WHERE username = 'Admin'").fetchone()
@@ -1309,7 +1312,7 @@ def admin_users():
     db = get_db()
     users = [dict(r) for r in db.execute("""
         SELECT u.id, u.username, u.role, u.is_active, u.must_change_password, u.inspector_id, u.created_at,
-               COALESCE(i.nom, u.user_nom) as nom, i.prenom, COALESCE(i.etat, u.user_etat) as etat, i.email
+               COALESCE(i.nom, u.user_nom) as nom, COALESCE(i.prenom, u.user_prenom) as prenom, COALESCE(i.etat, u.user_etat) as etat, i.email
         FROM users u LEFT JOIN inspectors i ON u.inspector_id = i.id ORDER BY u.role, u.username
     """).fetchall()]
 
@@ -1407,8 +1410,8 @@ def update_user_info(id):
     prenom = (data.get('prenom') or '').strip()
     etat   = (data.get('etat') or '').strip()
     db = get_db()
-    db.execute("UPDATE users SET user_nom = ?, user_etat = ?, updated_at = datetime('now') WHERE id = ?",
-               (nom or None, etat or None, id))
+    db.execute("UPDATE users SET user_nom = ?, user_etat = ?, user_prenom = ?, updated_at = datetime('now') WHERE id = ?",
+               (nom or None, etat or None, prenom or None, id))
     log_activity(db, request.user['id'], 'UPDATE_USER_INFO', f"Info #{id}: {nom} {prenom} / {etat}")
     db.commit()
     db.close()

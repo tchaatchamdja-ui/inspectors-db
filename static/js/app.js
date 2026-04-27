@@ -713,11 +713,11 @@ function createAnalyticsCharts(data) {
   const c1 = document.getElementById('chart-state');
   if (c1) analyticsCharts.push(new Chart(c1, { type:'bar', data:{ labels:data.byState.map(d=>d.etat), datasets:[{ label:'Inspecteurs', data:data.byState.map(d=>d.count), backgroundColor:cc.slice(0,data.byState.length), borderRadius:6, maxBarThickness:50 }] }, options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{y:{beginAtZero:true,ticks:{stepSize:5}}} } }));
   const c2 = document.getElementById('chart-domain');
-  if (c2) analyticsCharts.push(new Chart(c2, { type:'doughnut', data:{ labels:data.byDomain.map(d=>d.domaine), datasets:[{ data:data.byDomain.map(d=>d.count), backgroundColor:data.byDomain.map(d=>DOMAINE_COLORS[d.domaine]||'#718096'), borderWidth:2, borderColor:'#fff' }] }, options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'left',labels:{padding:12,font:{size:11}}}} } }));
+  if (c2) analyticsCharts.push(new Chart(c2, { type:'bar', data:{ labels:data.byDomain.map(d=>d.domaine), datasets:[{ label:'Inspecteurs', data:data.byDomain.map(d=>d.count), backgroundColor:data.byDomain.map(d=>DOMAINE_COLORS[d.domaine]||'#718096'), borderRadius:6, maxBarThickness:50 }] }, options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{y:{beginAtZero:true,ticks:{stepSize:1}}} } }));
   const c3 = document.getElementById('chart-level');
   if (c3) analyticsCharts.push(new Chart(c3, { type:'bar', data:{ labels:data.byLevel.map(d=>d.niveau.length>25?d.niveau.substring(0,25)+'...':d.niveau), datasets:[{ label:'Nombre', data:data.byLevel.map(d=>d.count), backgroundColor:'#805ad5', borderRadius:6, maxBarThickness:40 }] }, options:{ indexAxis:'y', responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{x:{beginAtZero:true,ticks:{stepSize:5}}} } }));
   const c4 = document.getElementById('chart-exp');
-  if (c4) analyticsCharts.push(new Chart(c4, { type:'pie', data:{ labels:data.byExperience.slice(0,10).map(d=>d.experience), datasets:[{ data:data.byExperience.slice(0,10).map(d=>d.count), backgroundColor:cc, borderWidth:2, borderColor:'#fff' }] }, options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'left',labels:{padding:10,font:{size:10}}}} } }));
+  if (c4) analyticsCharts.push(new Chart(c4, { type:'bar', data:{ labels:data.byExperience.slice(0,10).map(d=>d.experience), datasets:[{ label:'Inspecteurs', data:data.byExperience.slice(0,10).map(d=>d.count), backgroundColor:cc.slice(0,data.byExperience.slice(0,10).length), borderRadius:6, maxBarThickness:40 }] }, options:{ indexAxis:'y', responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{x:{beginAtZero:true,ticks:{stepSize:1}}} } }));
   const c5 = document.getElementById('chart-domain-state');
   if (c5) { const sts=[...new Set(data.domainState.map(d=>d.etat))]; const doms=[...new Set(data.domainState.map(d=>d.domaine))]; const ds=doms.map((dom,i)=>({label:dom,data:sts.map(st=>{const m=data.domainState.find(d=>d.etat===st&&d.domaine===dom);return m?m.count:0;}),backgroundColor:DOMAINE_COLORS[dom]||cc[i],borderRadius:4,maxBarThickness:40})); analyticsCharts.push(new Chart(c5,{type:'bar',data:{labels:sts,datasets:ds},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom',labels:{padding:12,font:{size:11}}}},scales:{x:{stacked:true},y:{stacked:true,beginAtZero:true,ticks:{stepSize:5}}}}})); }
   const c6 = document.getElementById('chart-speciality');
@@ -748,17 +748,18 @@ function renderAccessContent(search = '') {
     <div id="access-msg"></div>
     <div class="page-header"><h2>Gestion des acc\u00e8s</h2><div class="header-actions" style="display:flex;gap:0.75rem;align-items:center"><input type="text" placeholder="Rechercher un utilisateur..." class="search-input" oninput="renderAccessContent(this.value)" value="${esc(search)}"><button class="btn btn-primary btn-sm" onclick="openCreateUserForm()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Cr\u00e9er un utilisateur</button></div></div>
     <div class="table-container"><table class="data-table">
-      <thead><tr><th>Utilisateur</th><th>Nom</th><th>\u00c9tat</th><th>R\u00f4le</th><th>Statut</th><th>MdP</th><th>Derni\u00e8re connexion</th><th>Actions</th></tr></thead>
+      <thead><tr><th>Utilisateur</th><th>Pr\u00e9noms</th><th>Nom complet</th><th>\u00c9tat</th><th>R\u00f4le</th><th>Statut</th><th>MdP</th><th>Derni\u00e8re connexion</th><th>Actions</th></tr></thead>
       <tbody>${filtered.map(u => `<tr class="${!u.is_active ? 'row-inactive' : ''}">
         <td><span class="username" onclick="editUserUsername(${u.id}, '${esc(u.username)}')" title="Modifier">${esc(u.username)}</span></td>
-        <td>${u.nom ? esc(u.nom) + ' ' + esc(u.prenom || '') : '-'}</td>
+        <td>${esc(u.prenom || '-')}</td>
+        <td>${u.nom ? esc((u.prenom ? u.prenom + ' ' : '') + u.nom) : '-'}</td>
         <td>${esc(u.etat || '-')}</td>
         <td><select class="role-select" onchange="changeUserRole(${u.id}, this.value)" ${u.username === 'Admin' ? 'disabled' : ''}>${['National 2', 'National 1', 'R\u00e9gional', 'Administrateur'].map(r => `<option value="${r}" ${u.role === r ? 'selected' : ''}>${r}</option>`).join('')}</select></td>
         <td><span class="status-badge ${u.is_active ? 'active' : 'inactive'}">${u.is_active ? 'Actif' : 'Inactif'}</span></td>
         <td><span class="password-mask" id="pw-mask-${u.id}">********</span>${u.must_change_password ? '<span class="badge-warning" title="Doit changer son MdP">!</span>' : ''} <button class="btn-icon" title="D\u00e9masquer" onclick="revealUserPw(${u.id})"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button></td>
         <td class="date-cell">${u.lastLogin ? new Date(u.lastLogin).toLocaleString('fr-FR') : 'Jamais'}</td>
         <td class="actions-cell">
-          <button class="btn-icon" title="Modifier les informations" onclick="editUserInfo(${u.id}, '${esc(u.user_nom||'')}', '${esc(u.user_etat||'')}')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+          <button class="btn-icon" title="Modifier les informations" onclick="editUserInfo(${u.id}, '${esc(u.nom||'')}', '${esc(u.prenom||'')}', '${esc(u.etat||'')}')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
           <button class="btn-icon" title="R\u00e9initialiser MdP" onclick="resetUserPw(${u.id})"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>
           <button class="btn-icon" title="Historique" onclick="viewUserLogs(${u.id})"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></button>
           ${u.username !== 'Admin' ? `<button class="btn-icon ${u.is_active ? 'btn-danger' : 'btn-success'}" title="${u.is_active ? 'D\u00e9sactiver' : 'Activer'}" onclick="toggleUserActive(${u.id})">${u.is_active ? '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>' : '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>'}</button>` : ''}
@@ -772,13 +773,14 @@ async function resetUserPw(id){if(!confirm('R\u00e9initialiser le mot de passe ?
 async function toggleUserActive(id){try{const data=await api(`/admin/users/${id}/toggle-active`,{method:'PUT'});showAccessMsg(data.message);loadAccessPage();}catch(err){showAccessMsg(err.message,'error');}}
 function editUserUsername(id,current){const n=prompt("Nouveau nom d'utilisateur:",current);if(!n||n===current)return;api(`/admin/users/${id}/username`,{method:'PUT',body:JSON.stringify({username:n})}).then(()=>{showAccessMsg("Nom d'utilisateur mis \u00e0 jour");loadAccessPage();}).catch(err=>showAccessMsg(err.message,'error'));}
 
-function editUserInfo(id, currentNom, currentEtat) {
+function editUserInfo(id, currentNom, currentPrenom, currentEtat) {
   openModal(`
     <div class="modal-header"><h3>Modifier les informations</h3><button class="btn-close" onclick="closeModal()">&times;</button></div>
     <form id="edit-user-info-form">
       <div class="modal-body">
         <div id="edit-user-info-error"></div>
-        <div class="form-group"><label>Nom complet</label><input type="text" id="eui-nom" value="${esc(currentNom)}" placeholder="Nom et pr\u00e9nom"></div>
+        <div class="form-group"><label>Pr\u00e9noms</label><input type="text" id="eui-prenom" value="${esc(currentPrenom)}" placeholder="Pr\u00e9noms"></div>
+        <div class="form-group"><label>Nom</label><input type="text" id="eui-nom" value="${esc(currentNom)}" placeholder="Nom de famille"></div>
         <div class="form-group"><label>\u00c9tat membre</label><select id="eui-etat"><option value="">-- Aucun --</option>${ETATS.map(e=>`<option value="${e}" ${currentEtat===e?'selected':''}>${e}</option>`).join('')}</select></div>
       </div>
       <div class="modal-footer">
@@ -790,6 +792,7 @@ function editUserInfo(id, currentNom, currentEtat) {
     e.preventDefault();
     try {
       await api(`/admin/users/${id}/info`, { method: 'PUT', body: JSON.stringify({
+        prenom: document.getElementById('eui-prenom').value,
         nom: document.getElementById('eui-nom').value,
         etat: document.getElementById('eui-etat').value
       })});
