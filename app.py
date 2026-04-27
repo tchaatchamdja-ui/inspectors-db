@@ -1397,6 +1397,23 @@ def update_username(id):
     db.close()
     return jsonify({'message': "Nom d'utilisateur mis à jour"})
 
+@app.route('/api/admin/users/<int:id>/info', methods=['PUT'])
+@auth_required
+def update_user_info(id):
+    if request.user['role'] != 'Administrateur':
+        return jsonify({'error': 'Non autorisé'}), 403
+    data = request.json
+    nom    = (data.get('nom') or '').strip()
+    prenom = (data.get('prenom') or '').strip()
+    etat   = (data.get('etat') or '').strip()
+    db = get_db()
+    db.execute("UPDATE users SET user_nom = ?, user_etat = ?, updated_at = datetime('now') WHERE id = ?",
+               (nom or None, etat or None, id))
+    log_activity(db, request.user['id'], 'UPDATE_USER_INFO', f"Info #{id}: {nom} {prenom} / {etat}")
+    db.commit()
+    db.close()
+    return jsonify({'message': 'Informations mises à jour'})
+
 @app.route('/api/admin/users/<int:id>/reset-password', methods=['PUT'])
 @auth_required
 def reset_password(id):

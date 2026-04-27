@@ -290,6 +290,8 @@ let inspSort = { col: '', dir: 'asc' };
 async function loadInspectorsPage() {
   const container = document.getElementById('inspectors-page');
   if (!container) return;
+  inspFilters = { etat: '', domaine: '', niveau: '', experience: '', search: '', status: 'active' };
+  inspPage = 1;
   try {
     const filterStr = buildFilterParams();
     const [stats, data] = await Promise.all([api(`/inspectors/stats?${filterStr}`), api(`/inspectors?${filterStr}`)]);
@@ -320,9 +322,9 @@ function renderInspectorsContent() {
 
   container.innerHTML = `
     <div id="floating-msg"></div>
-    <div class="dashboard-section">
+    <div class="dashboard-section dashboard-domaine-full">
       <h3 class="dashboard-title"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg> Situation par \u00c9tat</h3>
-      <div class="dashboard">
+      <div class="dashboard dashboard-flex">
         <div class="stat-card stat-total"><div class="stat-number">${inspectorsStats.total}</div><div class="stat-label">Total Inspecteurs</div></div>
         ${inspectorsStats.byState.map(s => `<div class="stat-card" onclick="filterByState('${s.etat.replace(/'/g, "\\'")}')" style="cursor:pointer${inspFilters.etat === s.etat ? ';border-color:var(--primary)' : ''}"><div class="stat-number">${s.count}</div><div class="stat-label">${s.etat}</div></div>`).join('')}
       </div>
@@ -711,13 +713,13 @@ function createAnalyticsCharts(data) {
   const c1 = document.getElementById('chart-state');
   if (c1) analyticsCharts.push(new Chart(c1, { type:'bar', data:{ labels:data.byState.map(d=>d.etat), datasets:[{ label:'Inspecteurs', data:data.byState.map(d=>d.count), backgroundColor:cc.slice(0,data.byState.length), borderRadius:6, maxBarThickness:50 }] }, options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{y:{beginAtZero:true,ticks:{stepSize:5}}} } }));
   const c2 = document.getElementById('chart-domain');
-  if (c2) analyticsCharts.push(new Chart(c2, { type:'doughnut', data:{ labels:data.byDomain.map(d=>DOMAINE_LABELS[d.domaine]||d.domaine), datasets:[{ data:data.byDomain.map(d=>d.count), backgroundColor:data.byDomain.map(d=>DOMAINE_COLORS[d.domaine]||'#718096'), borderWidth:2, borderColor:'#fff' }] }, options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom',labels:{padding:12,font:{size:11}}}} } }));
+  if (c2) analyticsCharts.push(new Chart(c2, { type:'doughnut', data:{ labels:data.byDomain.map(d=>d.domaine), datasets:[{ data:data.byDomain.map(d=>d.count), backgroundColor:data.byDomain.map(d=>DOMAINE_COLORS[d.domaine]||'#718096'), borderWidth:2, borderColor:'#fff' }] }, options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'left',labels:{padding:12,font:{size:11}}}} } }));
   const c3 = document.getElementById('chart-level');
   if (c3) analyticsCharts.push(new Chart(c3, { type:'bar', data:{ labels:data.byLevel.map(d=>d.niveau.length>25?d.niveau.substring(0,25)+'...':d.niveau), datasets:[{ label:'Nombre', data:data.byLevel.map(d=>d.count), backgroundColor:'#805ad5', borderRadius:6, maxBarThickness:40 }] }, options:{ indexAxis:'y', responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{x:{beginAtZero:true,ticks:{stepSize:5}}} } }));
   const c4 = document.getElementById('chart-exp');
-  if (c4) analyticsCharts.push(new Chart(c4, { type:'pie', data:{ labels:data.byExperience.slice(0,10).map(d=>d.experience), datasets:[{ data:data.byExperience.slice(0,10).map(d=>d.count), backgroundColor:cc, borderWidth:2, borderColor:'#fff' }] }, options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom',labels:{padding:10,font:{size:10}}}} } }));
+  if (c4) analyticsCharts.push(new Chart(c4, { type:'pie', data:{ labels:data.byExperience.slice(0,10).map(d=>d.experience), datasets:[{ data:data.byExperience.slice(0,10).map(d=>d.count), backgroundColor:cc, borderWidth:2, borderColor:'#fff' }] }, options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'left',labels:{padding:10,font:{size:10}}}} } }));
   const c5 = document.getElementById('chart-domain-state');
-  if (c5) { const sts=[...new Set(data.domainState.map(d=>d.etat))]; const doms=[...new Set(data.domainState.map(d=>d.domaine))]; const ds=doms.map((dom,i)=>({label:DOMAINE_LABELS[dom]||dom,data:sts.map(st=>{const m=data.domainState.find(d=>d.etat===st&&d.domaine===dom);return m?m.count:0;}),backgroundColor:DOMAINE_COLORS[dom]||cc[i],borderRadius:4,maxBarThickness:40})); analyticsCharts.push(new Chart(c5,{type:'bar',data:{labels:sts,datasets:ds},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom',labels:{padding:12,font:{size:11}}}},scales:{x:{stacked:true},y:{stacked:true,beginAtZero:true,ticks:{stepSize:5}}}}})); }
+  if (c5) { const sts=[...new Set(data.domainState.map(d=>d.etat))]; const doms=[...new Set(data.domainState.map(d=>d.domaine))]; const ds=doms.map((dom,i)=>({label:dom,data:sts.map(st=>{const m=data.domainState.find(d=>d.etat===st&&d.domaine===dom);return m?m.count:0;}),backgroundColor:DOMAINE_COLORS[dom]||cc[i],borderRadius:4,maxBarThickness:40})); analyticsCharts.push(new Chart(c5,{type:'bar',data:{labels:sts,datasets:ds},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom',labels:{padding:12,font:{size:11}}}},scales:{x:{stacked:true},y:{stacked:true,beginAtZero:true,ticks:{stepSize:5}}}}})); }
   const c6 = document.getElementById('chart-speciality');
   if (c6) analyticsCharts.push(new Chart(c6, { type:'bar', data:{ labels:data.bySpeciality.map(d=>d.specialite.length>35?d.specialite.substring(0,35)+'...':d.specialite), datasets:[{ label:'Nombre', data:data.bySpeciality.map(d=>d.count), backgroundColor:'#38a169', borderRadius:6, maxBarThickness:35 }] }, options:{ indexAxis:'y', responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{x:{beginAtZero:true,ticks:{stepSize:5}}} } }));
 
@@ -726,11 +728,11 @@ function createAnalyticsCharts(data) {
   const cf1 = document.getElementById('chart-frm-state');
   if (cf1 && frm.byState) analyticsCharts.push(new Chart(cf1, { type:'bar', data:{ labels:frm.byState.map(d=>d.etat), datasets:[{ label:'Formateurs', data:frm.byState.map(d=>d.count), backgroundColor:cc.slice(0,frm.byState.length), borderRadius:6, maxBarThickness:50 }] }, options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{y:{beginAtZero:true,ticks:{stepSize:1}}} } }));
   const cf2 = document.getElementById('chart-frm-competence');
-  if (cf2 && frm.byCompetence) analyticsCharts.push(new Chart(cf2, { type:'doughnut', data:{ labels:frm.byCompetence.map(d=>d.type_competence), datasets:[{ data:frm.byCompetence.map(d=>d.count), backgroundColor:['#3182ce','#e53e3e','#38a169','#d69e2e'], borderWidth:2, borderColor:'#fff' }] }, options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom',labels:{padding:12,font:{size:11}}}} } }));
+  if (cf2 && frm.byCompetence) analyticsCharts.push(new Chart(cf2, { type:'doughnut', data:{ labels:frm.byCompetence.map(d=>d.type_competence), datasets:[{ data:frm.byCompetence.map(d=>d.count), backgroundColor:['#3182ce','#e53e3e','#38a169','#d69e2e'], borderWidth:2, borderColor:'#fff' }] }, options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'left',labels:{padding:12,font:{size:11}}}} } }));
   const cf3 = document.getElementById('chart-frm-domaine');
   if (cf3 && frm.byDomaine) analyticsCharts.push(new Chart(cf3, { type:'bar', data:{ labels:frm.byDomaine.map(d=>DOMAINE_LABELS[d.domaine]||d.domaine), datasets:[{ label:'Formateurs', data:frm.byDomaine.map(d=>d.count), backgroundColor:frm.byDomaine.map(d=>DOMAINE_COLORS[d.domaine]||'#718096'), borderRadius:6, maxBarThickness:40 }] }, options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{y:{beginAtZero:true,ticks:{stepSize:1}}} } }));
   const cf4 = document.getElementById('chart-frm-inspecteur');
-  if (cf4) { const fi = frm.inspecteurs||0; const fni = (frm.total||0)-fi; analyticsCharts.push(new Chart(cf4, { type:'pie', data:{ labels:['Aussi Inspecteur','Non Inspecteur'], datasets:[{ data:[fi,fni], backgroundColor:['#059669','#e2e8f0'], borderWidth:2, borderColor:'#fff' }] }, options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom',labels:{padding:12,font:{size:11}}}} } })); }
+  if (cf4) { const fi = frm.inspecteurs||0; const fni = (frm.total||0)-fi; analyticsCharts.push(new Chart(cf4, { type:'pie', data:{ labels:['Aussi Inspecteur','Non Inspecteur'], datasets:[{ data:[fi,fni], backgroundColor:['#059669','#e2e8f0'], borderWidth:2, borderColor:'#fff' }] }, options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'left',labels:{padding:12,font:{size:11}}}} } })); }
   const cf5 = document.getElementById('chart-frm-comp-state');
   if (cf5 && frm.competenceState) { const fsts=[...new Set(frm.competenceState.map(d=>d.etat))]; const fcomps=[...new Set(frm.competenceState.map(d=>d.type_competence))]; const fds=fcomps.map((comp,i)=>({label:comp,data:fsts.map(st=>{const m=frm.competenceState.find(d=>d.etat===st&&d.type_competence===comp);return m?m.count:0;}),backgroundColor:cc[i],borderRadius:4,maxBarThickness:40})); analyticsCharts.push(new Chart(cf5,{type:'bar',data:{labels:fsts,datasets:fds},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom',labels:{padding:12,font:{size:11}}}},scales:{x:{stacked:true},y:{stacked:true,beginAtZero:true,ticks:{stepSize:1}}}}})); }
 }
@@ -756,6 +758,7 @@ function renderAccessContent(search = '') {
         <td><span class="password-mask" id="pw-mask-${u.id}">********</span>${u.must_change_password ? '<span class="badge-warning" title="Doit changer son MdP">!</span>' : ''} <button class="btn-icon" title="D\u00e9masquer" onclick="revealUserPw(${u.id})"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button></td>
         <td class="date-cell">${u.lastLogin ? new Date(u.lastLogin).toLocaleString('fr-FR') : 'Jamais'}</td>
         <td class="actions-cell">
+          <button class="btn-icon" title="Modifier les informations" onclick="editUserInfo(${u.id}, '${esc(u.user_nom||'')}', '${esc(u.user_etat||'')}')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
           <button class="btn-icon" title="R\u00e9initialiser MdP" onclick="resetUserPw(${u.id})"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>
           <button class="btn-icon" title="Historique" onclick="viewUserLogs(${u.id})"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></button>
           ${u.username !== 'Admin' ? `<button class="btn-icon ${u.is_active ? 'btn-danger' : 'btn-success'}" title="${u.is_active ? 'D\u00e9sactiver' : 'Activer'}" onclick="toggleUserActive(${u.id})">${u.is_active ? '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>' : '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>'}</button>` : ''}
@@ -768,6 +771,32 @@ async function changeUserRole(id,role){try{await api(`/admin/users/${id}/role`,{
 async function resetUserPw(id){if(!confirm('R\u00e9initialiser le mot de passe ?'))return;try{const data=await api(`/admin/users/${id}/reset-password`,{method:'PUT'});showAccessMsg(data.message);if(data.recipientEmail && data.newPassword && data.username){const subject='R\u00e9initialisation de votre mot de passe - UEMOA';const body=`Bonjour,\n\nVotre mot de passe a \u00e9t\u00e9 r\u00e9initialis\u00e9.\n\nNom d'utilisateur : ${data.username}\nNouveau mot de passe : ${data.newPassword}\n\nVous devrez changer ce mot de passe lors de votre prochaine connexion.\n\nCordialement,\nL'\u00e9quipe UEMOA - URSAC`;const mailto=`mailto:${data.recipientEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;window.open(mailto,'_blank');}}catch(err){showAccessMsg(err.message,'error');}}
 async function toggleUserActive(id){try{const data=await api(`/admin/users/${id}/toggle-active`,{method:'PUT'});showAccessMsg(data.message);loadAccessPage();}catch(err){showAccessMsg(err.message,'error');}}
 function editUserUsername(id,current){const n=prompt("Nouveau nom d'utilisateur:",current);if(!n||n===current)return;api(`/admin/users/${id}/username`,{method:'PUT',body:JSON.stringify({username:n})}).then(()=>{showAccessMsg("Nom d'utilisateur mis \u00e0 jour");loadAccessPage();}).catch(err=>showAccessMsg(err.message,'error'));}
+
+function editUserInfo(id, currentNom, currentEtat) {
+  openModal(`
+    <div class="modal-header"><h3>Modifier les informations</h3><button class="btn-close" onclick="closeModal()">&times;</button></div>
+    <form id="edit-user-info-form">
+      <div class="modal-body">
+        <div id="edit-user-info-error"></div>
+        <div class="form-group"><label>Nom complet</label><input type="text" id="eui-nom" value="${esc(currentNom)}" placeholder="Nom et pr\u00e9nom"></div>
+        <div class="form-group"><label>\u00c9tat membre</label><select id="eui-etat"><option value="">-- Aucun --</option>${ETATS.map(e=>`<option value="${e}" ${currentEtat===e?'selected':''}>${e}</option>`).join('')}</select></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline" onclick="closeModal()">Annuler</button>
+        <button type="submit" class="btn btn-primary">Enregistrer</button>
+      </div>
+    </form>`);
+  document.getElementById('edit-user-info-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      await api(`/admin/users/${id}/info`, { method: 'PUT', body: JSON.stringify({
+        nom: document.getElementById('eui-nom').value,
+        etat: document.getElementById('eui-etat').value
+      })});
+      closeModal(); showAccessMsg('Informations mises \u00e0 jour'); loadAccessPage();
+    } catch(err) { document.getElementById('edit-user-info-error').innerHTML = `<div class="alert alert-error">${err.message}</div>`; }
+  });
+}
 async function revealUserPw(id){
   const adminPw = prompt("Entrez votre mot de passe administrateur pour d\u00e9masquer :");
   if (!adminPw) return;
@@ -949,6 +978,8 @@ let frmSort = { col: '', dir: 'asc' };
 async function loadFormateursPage() {
   const container = document.getElementById('formateurs-page');
   if (!container) return;
+  frmFilters = { etat: '', competence: '', domaine: '', search: '', status: 'active' };
+  frmPage = 1;
   try {
     const frmFilterStr = buildFrmFilterParams();
     const [stats, data] = await Promise.all([api(`/formateurs/stats?${frmFilterStr}`), api(`/formateurs?${frmFilterStr}`)]);
