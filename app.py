@@ -261,6 +261,12 @@ def init_db():
                 description TEXT NOT NULL,
                 FOREIGN KEY (formateur_id) REFERENCES formateurs(id) ON DELETE CASCADE
             );
+            -- Migrations idempotentes pour bases existantes (PG 9.6+)
+            ALTER TABLE users          ADD COLUMN IF NOT EXISTS user_nom TEXT;
+            ALTER TABLE users          ADD COLUMN IF NOT EXISTS user_prenom TEXT;
+            ALTER TABLE users          ADD COLUMN IF NOT EXISTS user_etat TEXT;
+            ALTER TABLE qualifications ADD COLUMN IF NOT EXISTS titularisation TEXT;
+            ALTER TABLE formateurs     ADD COLUMN IF NOT EXISTS inspector_id INTEGER;
             CREATE INDEX IF NOT EXISTS idx_qualifications_inspector ON qualifications(inspector_id);
             CREATE INDEX IF NOT EXISTS idx_qualifications_domaine ON qualifications(domaine);
             CREATE INDEX IF NOT EXISTS idx_qualifications_niveau ON qualifications(niveau);
