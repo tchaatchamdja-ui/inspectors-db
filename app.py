@@ -1941,12 +1941,29 @@ def update_user_info(id):
     prenom = (data.get('prenom') or '').strip()
     etat   = (data.get('etat') or '').strip()
     db = get_db()
-    db.execute("UPDATE users SET user_nom = ?, user_etat = ?, user_prenom = ?, updated_at = datetime('now') WHERE id = ?",
-               (nom or None, etat or None, prenom or None, id))
-    log_activity(db, request.user['id'], 'UPDATE_USER_INFO', f"Info #{id}: {nom} {prenom} / {etat}")
-    db.commit()
-    db.close()
-    return jsonify({'message': 'Informations mises à jour'})
+    try:
+        u = db.execute("SELECT id, inspector_id FROM users WHERE id = ?", (id,)).fetchone()
+        if not u:
+            return jsonify({'error': 'Utilisateur introuvable'}), 404
+        # Si l'utilisateur est lié à un inspecteur, le listing utilise COALESCE(i.nom, u.user_nom)
+        # → il faut mettre à jour la table inspectors pour que la modification soit visible.
+        if u['inspector_id']:
+            db.execute("UPDATE inspectors SET nom = ?, prenom = ?, etat = ?, updated_at = datetime('now') WHERE id = ?",
+                       (nom or '', prenom or '', etat or '', u['inspector_id']))
+            # Sync formateur lié si existant
+            db.execute("UPDATE formateurs SET nom = ?, prenom = ?, etat = ?, updated_at = datetime('now') WHERE inspector_id = ?",
+                       (nom or '', prenom or '', etat or '', u['inspector_id']))
+        else:
+            db.execute("UPDATE users SET user_nom = ?, user_etat = ?, user_prenom = ?, updated_at = datetime('now') WHERE id = ?",
+                       (nom or None, etat or None, prenom or None, id))
+        log_activity(db, request.user['id'], 'UPDATE_USER_INFO', f"Info #{id}: {nom} {prenom} / {etat}")
+        db.commit()
+        return jsonify({'message': 'Informations mises à jour'})
+    except Exception as e:
+        db.rollback()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        db.close()
 
 @app.route('/api/admin/users/<int:id>/reset-password', methods=['PUT'])
 @auth_required
