@@ -78,23 +78,28 @@ os.makedirs(os.path.join(BASE_DIR, 'data'), exist_ok=True)
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # ===== DATABASE =====
+import re as _re_mod
+_RE_INSERT_IGNORE = _re_mod.compile(r'INSERT\s+OR\s+IGNORE\s+INTO', _re_mod.IGNORECASE)
+_RE_INSERT_REPLACE = _re_mod.compile(r'INSERT\s+OR\s+REPLACE\s+INTO', _re_mod.IGNORECASE)
+_RE_GROUP_CONCAT_DISTINCT = _re_mod.compile(r'GROUP_CONCAT\(DISTINCT\s+((?:[^()]*|\([^()]*\))*)\)')
+_RE_GROUP_CONCAT = _re_mod.compile(r'GROUP_CONCAT\(((?:[^()]*|\([^()]*\))*)\)')
+_SQL_CONVERT_CACHE = {}
+
 def _q(sql):
-    """Convert SQLite SQL to PostgreSQL"""
-    if USE_POSTGRES:
-        sql = sql.replace('?', '%s')
-        sql = sql.replace("datetime('now')", 'CURRENT_TIMESTAMP')
-        # INSERT OR IGNORE → INSERT ... ON CONFLICT DO NOTHING
-        import re
-        sql = re.sub(r'INSERT\s+OR\s+IGNORE\s+INTO', 'INSERT INTO', sql, flags=re.IGNORECASE)
-        # INSERT OR REPLACE → INSERT ... ON CONFLICT DO NOTHING (best effort)
-        sql = re.sub(r'INSERT\s+OR\s+REPLACE\s+INTO', 'INSERT INTO', sql, flags=re.IGNORECASE)
-        # GROUP_CONCAT → STRING_AGG (handle nested parentheses like COALESCE)
-        sql = re.sub(r'GROUP_CONCAT\(DISTINCT\s+((?:[^()]*|\([^()]*\))*)\)', r"STRING_AGG(DISTINCT (\1)::text, ', ')", sql)
-        sql = re.sub(r'GROUP_CONCAT\(((?:[^()]*|\([^()]*\))*)\)', r"STRING_AGG((\1)::text, ', ')", sql)
-        # Append ON CONFLICT DO NOTHING for converted INSERT OR IGNORE
-        # (handled below in execute() via flag)
-        # || works in both SQLite and PostgreSQL, no change needed
-    return sql
+    """Convert SQLite SQL to PostgreSQL (mémoïsé)"""
+    if not USE_POSTGRES:
+        return sql
+    cached = _SQL_CONVERT_CACHE.get(sql)
+    if cached is not None:
+        return cached
+    out = sql.replace('?', '%s').replace("datetime('now')", 'CURRENT_TIMESTAMP')
+    out = _RE_INSERT_IGNORE.sub('INSERT INTO', out)
+    out = _RE_INSERT_REPLACE.sub('INSERT INTO', out)
+    out = _RE_GROUP_CONCAT_DISTINCT.sub(r"STRING_AGG(DISTINCT (\1)::text, ', ')", out)
+    out = _RE_GROUP_CONCAT.sub(r"STRING_AGG((\1)::text, ', ')", out)
+    if len(_SQL_CONVERT_CACHE) < 2000:
+        _SQL_CONVERT_CACHE[sql] = out
+    return out
 
 class PgRowWrapper(dict):
     """Wrap psycopg2 RealDictRow to support both dict-style and index access"""
@@ -109,8 +114,7 @@ class PgCursorWrapper:
         self._last_insert_id = None
 
     def execute(self, sql, params=None):
-        import re as _re
-        is_ignore = bool(_re.search(r'INSERT\s+OR\s+IGNORE', sql, _re.IGNORECASE))
+        is_ignore = bool(_RE_INSERT_IGNORE.search(sql))
         converted = _q(sql)
         if converted.strip().upper().startswith('INSERT') and 'RETURNING' not in converted.upper():
             suffix = ' ON CONFLICT DO NOTHING RETURNING id' if is_ignore else ' RETURNING id'
@@ -238,6 +242,7 @@ def init_db():
                 telephone TEXT,
                 cv_path TEXT,
                 is_inspecteur INTEGER NOT NULL DEFAULT 0,
+                inspector_id INTEGER REFERENCES inspectors(id) ON DELETE SET NULL,
                 is_active INTEGER NOT NULL DEFAULT 1,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -256,6 +261,20 @@ def init_db():
                 description TEXT NOT NULL,
                 FOREIGN KEY (formateur_id) REFERENCES formateurs(id) ON DELETE CASCADE
             );
+            CREATE INDEX IF NOT EXISTS idx_qualifications_inspector ON qualifications(inspector_id);
+            CREATE INDEX IF NOT EXISTS idx_qualifications_domaine ON qualifications(domaine);
+            CREATE INDEX IF NOT EXISTS idx_qualifications_niveau ON qualifications(niveau);
+            CREATE INDEX IF NOT EXISTS idx_users_inspector ON users(inspector_id);
+            CREATE INDEX IF NOT EXISTS idx_inspectors_active_etat ON inspectors(is_active, etat);
+            CREATE INDEX IF NOT EXISTS idx_inspectors_nom ON inspectors(nom);
+            CREATE INDEX IF NOT EXISTS idx_formateur_competences_formateur ON formateur_competences(formateur_id);
+            CREATE INDEX IF NOT EXISTS idx_formateur_competences_type ON formateur_competences(type_competence);
+            CREATE INDEX IF NOT EXISTS idx_formateur_formations_formateur ON formateur_formations(formateur_id);
+            CREATE INDEX IF NOT EXISTS idx_formateurs_active_etat ON formateurs(is_active, etat);
+            CREATE INDEX IF NOT EXISTS idx_formateurs_nom ON formateurs(nom);
+            CREATE INDEX IF NOT EXISTS idx_formateurs_inspector ON formateurs(inspector_id);
+            CREATE INDEX IF NOT EXISTS idx_settings_category_active ON settings(category, is_active);
+            CREATE INDEX IF NOT EXISTS idx_activity_log_user ON activity_log(user_id, created_at);
         """)
         db.commit()
     else:
@@ -332,6 +351,7 @@ def init_db():
                 telephone TEXT,
                 cv_path TEXT,
                 is_inspecteur INTEGER NOT NULL DEFAULT 0,
+                inspector_id INTEGER REFERENCES inspectors(id) ON DELETE SET NULL,
                 is_active INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT DEFAULT (datetime('now')),
                 updated_at TEXT DEFAULT (datetime('now'))
@@ -362,7 +382,58 @@ def init_db():
         qual_cols = [c[1] for c in db.execute("PRAGMA table_info(qualifications)").fetchall()]
         if 'titularisation' not in qual_cols:
             db.execute("ALTER TABLE qualifications ADD COLUMN titularisation TEXT")
+        # Lien inspecteur <-> formateur (Option 2)
+        frm_cols = [c[1] for c in db.execute("PRAGMA table_info(formateurs)").fetchall()]
+        if 'inspector_id' not in frm_cols:
+            db.execute("ALTER TABLE formateurs ADD COLUMN inspector_id INTEGER")
+        # Index pour performance
+        db.executescript("""
+            CREATE INDEX IF NOT EXISTS idx_qualifications_inspector ON qualifications(inspector_id);
+            CREATE INDEX IF NOT EXISTS idx_qualifications_domaine ON qualifications(domaine);
+            CREATE INDEX IF NOT EXISTS idx_qualifications_niveau ON qualifications(niveau);
+            CREATE INDEX IF NOT EXISTS idx_users_inspector ON users(inspector_id);
+            CREATE INDEX IF NOT EXISTS idx_inspectors_active_etat ON inspectors(is_active, etat);
+            CREATE INDEX IF NOT EXISTS idx_inspectors_nom ON inspectors(nom);
+            CREATE INDEX IF NOT EXISTS idx_formateur_competences_formateur ON formateur_competences(formateur_id);
+            CREATE INDEX IF NOT EXISTS idx_formateur_competences_type ON formateur_competences(type_competence);
+            CREATE INDEX IF NOT EXISTS idx_formateur_formations_formateur ON formateur_formations(formateur_id);
+            CREATE INDEX IF NOT EXISTS idx_formateurs_active_etat ON formateurs(is_active, etat);
+            CREATE INDEX IF NOT EXISTS idx_formateurs_nom ON formateurs(nom);
+            CREATE INDEX IF NOT EXISTS idx_formateurs_inspector ON formateurs(inspector_id);
+            CREATE INDEX IF NOT EXISTS idx_settings_category_active ON settings(category, is_active);
+            CREATE INDEX IF NOT EXISTS idx_activity_log_user ON activity_log(user_id, created_at);
+        """)
         db.commit()
+    # Migration auto-lien inspecteur <-> formateur (idempotent)
+    try:
+        # Lien par nom+prenom+etat
+        db.execute("""
+            UPDATE formateurs SET inspector_id = (
+              SELECT i.id FROM inspectors i
+              WHERE UPPER(TRIM(i.nom))    = UPPER(TRIM(formateurs.nom))
+                AND UPPER(TRIM(i.prenom)) = UPPER(TRIM(formateurs.prenom))
+                AND TRIM(i.etat)          = TRIM(formateurs.etat)
+                AND i.is_active = 1
+              LIMIT 1
+            )
+            WHERE formateurs.is_active = 1 AND formateurs.inspector_id IS NULL
+        """)
+        # Lien par email (fallback pour cas avec prénoms variant)
+        db.execute("""
+            UPDATE formateurs SET inspector_id = (
+              SELECT i.id FROM inspectors i
+              WHERE LOWER(TRIM(i.email)) = LOWER(TRIM(formateurs.email))
+                AND i.email IS NOT NULL AND i.email != ''
+                AND i.is_active = 1
+              LIMIT 1
+            )
+            WHERE formateurs.is_active = 1 AND formateurs.inspector_id IS NULL
+              AND formateurs.email IS NOT NULL AND formateurs.email != ''
+        """)
+        db.execute("UPDATE formateurs SET is_inspecteur = 1 WHERE inspector_id IS NOT NULL AND is_inspecteur = 0")
+        db.commit()
+    except Exception as _e:
+        print(f"[migration link] avertissement : {_e}")
     # Create admin
     admin = db.execute("SELECT id FROM users WHERE username = 'Admin'").fetchone()
     if not admin:
@@ -688,10 +759,19 @@ def list_inspectors():
     sql = f"SELECT DISTINCT i.* FROM inspectors i {join_qual} WHERE {where_clause} ORDER BY i.etat, i.nom LIMIT ? OFFSET ?"
     inspectors = [dict(r) for r in db.execute(sql, params + [limit, offset]).fetchall()]
 
+    # Batch fetch qualifications + users (évite N+1 — 2 requêtes au total au lieu de 2*N)
+    ids = [ins['id'] for ins in inspectors]
+    quals_by = {}
+    user_set = set()
+    if ids:
+        placeholders = ','.join(['?'] * len(ids))
+        for q in db.execute(f"SELECT * FROM qualifications WHERE inspector_id IN ({placeholders})", ids).fetchall():
+            quals_by.setdefault(q['inspector_id'], []).append(dict(q))
+        for u in db.execute(f"SELECT inspector_id FROM users WHERE inspector_id IN ({placeholders})", ids).fetchall():
+            user_set.add(u['inspector_id'])
     for ins in inspectors:
-        ins['qualifications'] = [dict(q) for q in db.execute("SELECT * FROM qualifications WHERE inspector_id = ?", (ins['id'],)).fetchall()]
-        u = db.execute("SELECT id FROM users WHERE inspector_id = ?", (ins['id'],)).fetchone()
-        ins['has_user'] = bool(u)
+        ins['qualifications'] = quals_by.get(ins['id'], [])
+        ins['has_user'] = ins['id'] in user_set
 
     db.close()
     return jsonify({'inspectors': inspectors, 'total': total, 'page': page, 'totalPages': (total + limit - 1) // limit})
@@ -706,8 +786,128 @@ def get_inspector(id):
         return jsonify({'error': 'Non trouvé'}), 404
     result = dict(ins)
     result['qualifications'] = [dict(q) for q in db.execute("SELECT * FROM qualifications WHERE inspector_id = ?", (id,)).fetchall()]
+    # Lien formateur (Option 2)
+    frm = db.execute("SELECT id, reference, nom, prenom, etat, email FROM formateurs WHERE inspector_id = ? AND is_active = 1", (id,)).fetchone()
+    result['formateur'] = dict(frm) if frm else None
+    result['is_formateur'] = bool(frm)
     db.close()
     return jsonify(result)
+
+# ---- Helpers pour lien inspecteur <-> formateur ----
+def _find_formateur_match(db, nom, prenom, etat, email=None, exclude_inspector_id=None):
+    """Trouve un formateur potentiellement correspondant (non encore lié à un autre inspecteur)."""
+    rows = db.execute(
+        "SELECT id, reference, nom, prenom, etat, email, inspector_id FROM formateurs"
+        " WHERE is_active = 1"
+        " AND (inspector_id IS NULL OR inspector_id = ?)"
+        " AND UPPER(TRIM(nom)) = UPPER(TRIM(?))"
+        " AND UPPER(TRIM(prenom)) = UPPER(TRIM(?))"
+        " AND TRIM(etat) = TRIM(?)"
+        " LIMIT 1",
+        (exclude_inspector_id or -1, nom, prenom, etat)
+    ).fetchone()
+    if rows:
+        return dict(rows)
+    if email:
+        rows = db.execute(
+            "SELECT id, reference, nom, prenom, etat, email, inspector_id FROM formateurs"
+            " WHERE is_active = 1 AND (inspector_id IS NULL OR inspector_id = ?)"
+            " AND LOWER(TRIM(email)) = LOWER(TRIM(?)) AND email IS NOT NULL AND email != ''"
+            " LIMIT 1",
+            (exclude_inspector_id or -1, email)
+        ).fetchone()
+        if rows:
+            return dict(rows)
+    return None
+
+def _handle_formateur_link(db, inspector_id, nom, prenom, etat, email, telephone):
+    """Crée/lie/délie un formateur en fonction des champs du formulaire.
+    Retourne (formateur_id, action) où action ∈ {'linked','created','unlinked','none'}."""
+    is_formateur = request.form.get('is_formateur', '').strip().lower() in ('true', '1', 'on', 'yes')
+    existing = db.execute("SELECT id FROM formateurs WHERE inspector_id = ?", (inspector_id,)).fetchone()
+    if not is_formateur:
+        if existing:
+            db.execute("UPDATE formateurs SET inspector_id = NULL, is_inspecteur = 0, updated_at = datetime('now') WHERE id = ?", (existing['id'],))
+            return (None, 'unlinked')
+        return (None, 'none')
+
+    # is_formateur = True
+    if existing:
+        # Déjà lié — synchroniser les champs identifiants
+        db.execute("UPDATE formateurs SET nom = ?, prenom = ?, etat = ?, email = ?, telephone = ?, is_inspecteur = 1, updated_at = datetime('now') WHERE id = ?",
+                   (nom, prenom, etat, email, telephone, existing['id']))
+        return (existing['id'], 'none')
+
+    explicit_fid = request.form.get('formateur_id', '').strip()
+    if explicit_fid:
+        try:
+            fid = int(explicit_fid)
+            chk = db.execute("SELECT id, inspector_id FROM formateurs WHERE id = ?", (fid,)).fetchone()
+            if chk and (not chk['inspector_id'] or chk['inspector_id'] == inspector_id):
+                db.execute("UPDATE formateurs SET inspector_id = ?, is_inspecteur = 1, nom = ?, prenom = ?, etat = ?, email = ?, telephone = ?, updated_at = datetime('now') WHERE id = ?",
+                           (inspector_id, nom, prenom, etat, email, telephone, fid))
+                return (fid, 'linked')
+        except (ValueError, TypeError):
+            pass
+
+    # Auto-match par nom+prenom+etat
+    match = _find_formateur_match(db, nom, prenom, etat, email)
+    if match:
+        db.execute("UPDATE formateurs SET inspector_id = ?, is_inspecteur = 1, email = ?, telephone = ?, updated_at = datetime('now') WHERE id = ?",
+                   (inspector_id, email, telephone, match['id']))
+        return (match['id'], 'linked')
+
+    # Création d'un nouveau formateur
+    ref = generate_formateur_reference(db)
+    cursor = db.execute("INSERT INTO formateurs (reference, nom, prenom, etat, email, telephone, is_inspecteur, inspector_id) VALUES (?, ?, ?, ?, ?, ?, 1, ?)",
+                        (ref, nom, prenom, etat, email or None, telephone or None, inspector_id))
+    fid = cursor.lastrowid
+    if not fid:
+        fid = db.execute("SELECT id FROM formateurs WHERE reference = ?", (ref,)).fetchone()['id']
+    # Compétences
+    comps_json = request.form.get('formateur_competences', '[]')
+    try:
+        for c in json.loads(comps_json):
+            t = (c.get('type_competence') or '').strip()
+            d = (c.get('domaine') or '').strip() or None
+            if t:
+                db.execute("INSERT INTO formateur_competences (formateur_id, type_competence, domaine) VALUES (?, ?, ?)", (fid, t, d))
+    except Exception:
+        pass
+    # Formations délivrées / développées
+    for kind, key in (('delivree', 'formateur_formations_delivrees'), ('developpee', 'formateur_formations_developpees')):
+        try:
+            for desc in json.loads(request.form.get(key, '[]')):
+                desc = (desc or '').strip()
+                if desc:
+                    db.execute("INSERT INTO formateur_formations (formateur_id, type, description) VALUES (?, ?, ?)", (fid, kind, desc))
+        except Exception:
+            pass
+    return (fid, 'created')
+
+@app.route('/api/formateurs/match', methods=['GET'])
+@auth_required
+def formateur_match():
+    """Renvoie un formateur potentiellement correspondant à un inspecteur (par nom+prenom+etat ou email)."""
+    if request.user['role'] not in ('National 1', 'Régional', 'Administrateur'):
+        return jsonify({'error': 'Non autorisé'}), 403
+    nom = (request.args.get('nom') or '').strip()
+    prenom = (request.args.get('prenom') or '').strip()
+    etat = (request.args.get('etat') or '').strip()
+    email = (request.args.get('email') or '').strip()
+    exclude = request.args.get('inspector_id')
+    try:
+        exclude_id = int(exclude) if exclude else None
+    except (ValueError, TypeError):
+        exclude_id = None
+    if not nom or not prenom or not etat:
+        return jsonify({'match': None})
+    db = get_db()
+    try:
+        m = _find_formateur_match(db, nom, prenom, etat, email or None, exclude_id)
+        return jsonify({'match': m})
+    finally:
+        db.close()
 
 @app.route('/api/inspectors', methods=['POST'])
 @auth_required
@@ -763,6 +963,14 @@ def add_inspector():
             except Exception:
                 pass
 
+        # Lien formateur (Option 2)
+        try:
+            fid, action = _handle_formateur_link(db, inspector_id, nom, prenom, etat, email or None, telephone or None)
+            if action in ('linked', 'created'):
+                log_activity(db, request.user['id'], 'LINK_FORMATEUR', f"Inspecteur #{inspector_id} {'créé en tant que' if action=='created' else 'lié au'} formateur #{fid}")
+        except Exception as _e:
+            print(f"[link formateur] {_e}")
+
         log_activity(db, request.user['id'], 'ADD_INSPECTOR', f"Ajout: {nom} {prenom} ({etat})")
         db.commit()
         return jsonify({'id': inspector_id, 'reference': ref, 'message': 'Inspecteur ajouté avec succès'})
@@ -817,6 +1025,15 @@ def update_inspector(id):
                 if q.get('domaine'):
                     db.execute("INSERT INTO qualifications (inspector_id, domaine, specialite, niveau, experience, titularisation) VALUES (?, ?, ?, ?, ?, ?)",
                         (id, q['domaine'], q.get('specialite', ''), q.get('niveau', ''), q.get('experience', ''), q.get('titularisation', '')))
+
+        # Lien formateur (Option 2) — uniquement si admin/régional/national 1
+        if request.user['role'] in ('National 1', 'Régional', 'Administrateur') and 'is_formateur' in request.form:
+            try:
+                fid, action = _handle_formateur_link(db, id, nom, prenom, etat, email or None, telephone or None)
+                if action != 'none':
+                    log_activity(db, request.user['id'], 'LINK_FORMATEUR', f"Inspecteur #{id}: {action} formateur #{fid or ''}")
+            except Exception as _e:
+                print(f"[link formateur] {_e}")
 
         log_activity(db, request.user['id'], 'UPDATE_INSPECTOR', f"Modification: {ins['reference']}")
         db.commit()
@@ -891,10 +1108,10 @@ def bulk_delete_inspectors():
     if not ids:
         return jsonify({'error': 'Aucun inspecteur sélectionné'}), 400
     db = get_db()
-    for iid in ids:
-        db.execute("DELETE FROM qualifications WHERE inspector_id = ?", (iid,))
-        db.execute("DELETE FROM inspectors WHERE id = ?", (iid,))
-        db.execute("UPDATE users SET is_active = 0 WHERE inspector_id = ?", (iid,))
+    placeholders = ','.join(['?'] * len(ids))
+    db.execute(f"DELETE FROM qualifications WHERE inspector_id IN ({placeholders})", ids)
+    db.execute(f"UPDATE users SET is_active = 0 WHERE inspector_id IN ({placeholders})", ids)
+    db.execute(f"DELETE FROM inspectors WHERE id IN ({placeholders})", ids)
     log_activity(db, request.user['id'], 'BULK_DELETE_INSPECTORS', f"Suppression de {len(ids)} inspecteur(s)")
     db.commit()
     db.close()
@@ -2051,11 +2268,20 @@ def list_formateurs():
     total = db.execute(count_sql, params).fetchone()['c']
     sql = f"SELECT DISTINCT f.* FROM formateurs f {join} WHERE {where_clause} ORDER BY f.etat, f.nom LIMIT ? OFFSET ?"
     formateurs_rows = db.execute(sql, params + [limit, offset]).fetchall()
+    # Batch fetch competences + formations (évite N+1)
+    ids = [fr['id'] for fr in formateurs_rows]
+    comps_by, forms_by = {}, {}
+    if ids:
+        placeholders = ','.join(['?'] * len(ids))
+        for c in db.execute(f"SELECT * FROM formateur_competences WHERE formateur_id IN ({placeholders})", ids).fetchall():
+            comps_by.setdefault(c['formateur_id'], []).append(dict(c))
+        for fr_row in db.execute(f"SELECT * FROM formateur_formations WHERE formateur_id IN ({placeholders})", ids).fetchall():
+            forms_by.setdefault(fr_row['formateur_id'], []).append(dict(fr_row))
     result = []
     for fr in formateurs_rows:
         d = dict(fr)
-        d['competences'] = [dict(c) for c in db.execute("SELECT * FROM formateur_competences WHERE formateur_id = ?", (fr['id'],)).fetchall()]
-        d['formations'] = [dict(f_row) for f_row in db.execute("SELECT * FROM formateur_formations WHERE formateur_id = ?", (fr['id'],)).fetchall()]
+        d['competences'] = comps_by.get(fr['id'], [])
+        d['formations'] = forms_by.get(fr['id'], [])
         result.append(d)
     db.close()
     return jsonify({'formateurs': result, 'total': total, 'totalPages': max(1, (total + limit - 1) // limit)})
@@ -2200,10 +2426,10 @@ def bulk_delete_formateurs():
     if not ids:
         return jsonify({'error': 'Aucun formateur sélectionné'}), 400
     db = get_db()
-    for fid in ids:
-        db.execute("DELETE FROM formateur_competences WHERE formateur_id = ?", (fid,))
-        db.execute("DELETE FROM formateur_formations WHERE formateur_id = ?", (fid,))
-        db.execute("DELETE FROM formateurs WHERE id = ?", (fid,))
+    placeholders = ','.join(['?'] * len(ids))
+    db.execute(f"DELETE FROM formateur_competences WHERE formateur_id IN ({placeholders})", ids)
+    db.execute(f"DELETE FROM formateur_formations WHERE formateur_id IN ({placeholders})", ids)
+    db.execute(f"DELETE FROM formateurs WHERE id IN ({placeholders})", ids)
     log_activity(db, request.user['id'], 'BULK_DELETE_FORMATEURS', f"Suppression de {len(ids)} formateur(s)")
     db.commit()
     db.close()

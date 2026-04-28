@@ -56,7 +56,16 @@ const DOMAINE_LABELS = { PEL: 'Personnel (PEL)', AIR: 'Navigabilit\u00e9 (AIR)',
 const DOMAINE_COLORS = { PEL: '#3182ce', AIR: '#e53e3e', OPS: '#38a169', AGA: '#d69e2e', AIG: '#805ad5', PNS: '#dd6b20', AVSEC: '#319795' };
 let NIVEAUX = ['Inspecteur Stagiaire', 'Inspecteur Titulaire', 'Inspecteur Principal', 'Inspecteur Senior', 'Enqu\u00eateur Technique', 'Enqu\u00eateur de Premi\u00e8re Information', 'Enqu\u00eateur Confirm\u00e9'];
 let FORMATEUR_TYPES = ['Instructeur', 'D\u00e9veloppeur de Cours'];
-const SPECIALITES = ['Licence et formation du Personnel', 'Navigabilit\u00e9 des A\u00e9ronefs - Cellule et Moteur', 'Navigabilit\u00e9 des A\u00e9ronefs - Avionique', 'Exploitation technique des A\u00e9ronefs - Sol', 'Exploitation technique des A\u00e9ronefs - Vol', 'Exploitation technique des A\u00e9ronefs - S\u00e9curit\u00e9 Cabine', 'Exploitation technique des A\u00e9ronefs - Marchandises dangereuses', 'G\u00e9nie Civil', 'Exploitation et Gestion du P\u00e9ril Animalier', "Sauvetage et Lutte contre l'incendie", '\u00c9nergie et Balisage', 'Circulation a\u00e9rienne', 'Transport a\u00e9rien', 'Pilotage', 'Droit a\u00e9rien', 'M\u00e9decine a\u00e9ronautique', 'Gestion A\u00e9roportuaire'];
+const SPECIALITES_BY_DOMAINE = {
+  PEL: ['Licence et formation du Personnel', 'M\u00e9decine a\u00e9ronautique'],
+  AIR: ['Navigabilit\u00e9 des A\u00e9ronefs - Cellule et Moteur', 'Navigabilit\u00e9 des A\u00e9ronefs - Avionique'],
+  OPS: ['Exploitation technique des A\u00e9ronefs - Sol', 'Exploitation technique des A\u00e9ronefs - Vol', 'Exploitation technique des A\u00e9ronefs - S\u00e9curit\u00e9 Cabine', 'Exploitation technique des A\u00e9ronefs - Marchandises dangereuses', 'Pilotage'],
+  AGA: ['G\u00e9nie Civil', 'Exploitation et Gestion du P\u00e9ril Animalier', "Sauvetage et Lutte contre l'incendie", '\u00c9nergie et Balisage', 'Gestion A\u00e9roportuaire'],
+  AIG: ['Enqu\u00eates accidents/incidents'],
+  PNS: ['Circulation a\u00e9rienne', 'Transport a\u00e9rien'],
+  AVSEC: ['S\u00fbret\u00e9 de l\u2019aviation civile']
+};
+const SPECIALITES = Object.values(SPECIALITES_BY_DOMAINE).flat();
 const EXP_FILTERS = [['', 'Toutes'], ['less1', 'Moins de 1 an'], ['1to3', '1 \u00e0 3 ans'], ['3to5', '3 \u00e0 5 ans'], ['5to8', '5 \u00e0 8 ans'], ['8to10', '8 \u00e0 10 ans'], ['10to15', '10 \u00e0 15 ans'], ['15plus', '15 ans et plus']];
 
 // ===== THEME =====
@@ -360,14 +369,15 @@ function renderInspectorsContent() {
             <button onclick="exportFile('csv')" class="export-item"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#38a169" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span>Export CSV</span><small>.csv</small></button>
             <button onclick="exportFile('excel')" class="export-item"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#1a7f37" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span>Export Excel</span><small>.xlsx</small></button>
             <button onclick="exportFile('pdf')" class="export-item"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span>Export PDF</span><small>.pdf</small></button>
+            ${state.user?.role === 'Administrateur' ? `<div style="border-top:1px solid #e2e8f0;margin:0.25rem 0"></div><button onclick="downloadImportTemplate('inspectors')" class="export-item"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3182ce" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span>Modèle d'import</span><small>.xlsx</small></button>` : ''}
           </div>
         </div>
-        ${state.user?.role === 'Administrateur' ? `<button class="btn btn-outline btn-sm" title="Télécharger le modèle Excel" onclick="downloadImportTemplate('inspectors')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Modèle</button><button class="btn btn-outline btn-sm" onclick="document.getElementById('import-inspectors-file').click()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> Importer Excel</button><input type="file" id="import-inspectors-file" accept=".xlsx" style="display:none" onchange="importInspectors(this)">` : ''}
+        ${state.user?.role === 'Administrateur' ? `<button class="btn btn-outline btn-sm" onclick="document.getElementById('import-inspectors-file').click()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> Importer Excel</button><input type="file" id="import-inspectors-file" accept=".xlsx" style="display:none" onchange="importInspectors(this)">` : ''}
         ${canDeactivate ? `<button class="btn btn-sm" id="insp-delete-btn" style="background:#dc2626;color:white;display:none" onclick="bulkDeleteInspectors()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-2 14H7L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg> Supprimer</button>` : ''}
         ${canAdd ? `<button class="btn btn-primary btn-sm" onclick="openInspectorForm()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Inspecteur</button>` : ''}
       </div>
     </div>
-    <div class="results-info" style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap"><span>${inspectorsData.total} inspecteur${inspectorsData.total > 1 ? 's' : ''} trouv\u00e9${inspectorsData.total > 1 ? 's' : ''}</span><label style="display:flex;align-items:center;gap:0.5rem;font-size:0.875rem">Afficher <select onchange="changeInspPageSize(this.value)" style="padding:0.25rem 0.5rem">${[10,25,50,100,200].map(n=>`<option value="${n}" ${inspPageSize===n?'selected':''}>${n}</option>`).join('')}</select> par page</label></div>
+    <div class="results-info" style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap"><span>${inspectorsData.total} inspecteur${inspectorsData.total > 1 ? 's' : ''} trouv\u00e9${inspectorsData.total > 1 ? 's' : ''}</span><label style="display:flex;align-items:center;gap:0.5rem;font-size:0.875rem;white-space:nowrap">Afficher <select onchange="changeInspPageSize(this.value)" style="padding:0.25rem 0.5rem">${[10,25,50,100,200].map(n=>`<option value="${n}" ${inspPageSize===n?'selected':''}>${n}</option>`).join('')}</select> par page</label></div>
     <div class="table-container">
       <table class="data-table">
         <thead><tr>${canDeactivate ? '<th style="width:30px"><input type="checkbox" onchange="toggleAllInspectors(this.checked)"></th>' : ''}<th class="sortable" style="display:none" onclick="inspSortBy('reference')">R\u00e9f.${inspSortIcon('reference')}</th><th class="sortable" onclick="inspSortBy('nom')">Nom et Pr\u00e9nom${inspSortIcon('nom')}</th><th class="sortable" onclick="inspSortBy('etat')">\u00c9tat${inspSortIcon('etat')}</th><th class="sortable" onclick="inspSortBy('domaine')">Domaine${inspSortIcon('domaine')}</th><th>Sp\u00e9cialit\u00e9</th><th>Titularisation</th><th class="sortable" onclick="inspSortBy('niveau')">Niveau${inspSortIcon('niveau')}</th><th>Exp.</th><th>Actions</th></tr></thead>
@@ -554,12 +564,25 @@ async function viewInspector(id) {
 
 // ===== INSPECTOR FORM =====
 let formQuals = [{ domaine: '', specialite: '', niveau: '', experience: '', titularisation: '' }];
+let formIsFormateur = false;
+let formMatchedFormateur = null;
+let formInsCompetences = [{ type_competence: '', domaine: '' }];
+let formInsFormDelivrees = [''];
+let formInsFormDeveloppees = [''];
+let formInsLinkedFormateur = null;
 
 function openInspectorForm(inspector = null) {
   const isEdit = !!inspector;
   formQuals = inspector?.qualifications?.length > 0 ? inspector.qualifications.map(q => ({ domaine: q.domaine, specialite: q.specialite, niveau: q.niveau, experience: q.experience || '', titularisation: q.titularisation || '' })) : [{ domaine: '', specialite: '', niveau: '', experience: '', titularisation: '' }];
+  formInsLinkedFormateur = inspector?.formateur || null;
+  formIsFormateur = !!formInsLinkedFormateur;
+  formMatchedFormateur = null;
+  formInsCompetences = [{ type_competence: '', domaine: '' }];
+  formInsFormDelivrees = [''];
+  formInsFormDeveloppees = [''];
   const userRole = state.user?.role;
   const isNat1 = userRole === 'National 1';
+  const canManageFormateur = userRole === 'Administrateur' || userRole === 'R\u00e9gional' || isNat1;
 
   openModal(`
     <div class="modal-header"><h3>${isEdit ? "Modifier l'inspecteur" : 'Ajouter un inspecteur'}</h3><button class="btn-close" onclick="closeModal()">&times;</button></div>
@@ -581,6 +604,11 @@ function openInspectorForm(inspector = null) {
         </div>
         <h4 style="margin-top:1.5rem">Qualifications <button type="button" class="btn btn-sm btn-outline" style="margin-left:1rem" onclick="addQualRow()">+ Ajouter</button></h4>
         <div id="quals-container">${renderQualsRows()}</div>
+        ${canManageFormateur ? `
+        <h4 style="margin-top:1.5rem">Formateur</h4>
+        <div class="form-group" style="align-self:flex-start"><label style="display:inline-flex;align-items:center;gap:0.35rem;white-space:nowrap;cursor:pointer;margin:0"><input type="checkbox" id="f-is-formateur" ${formIsFormateur ? 'checked' : ''} onchange="toggleInsFormateur(this.checked)" style="margin:0">Cet inspecteur est aussi formateur</label></div>
+        <div id="ins-formateur-section" style="${formIsFormateur ? '' : 'display:none'}">${renderInsFormateurSection(inspector?.id)}</div>
+        ` : ''}
       </div>
       <div class="modal-footer"><button type="button" class="btn btn-outline" onclick="closeModal()">Annuler</button><button type="submit" class="btn btn-primary" id="save-btn">${isEdit ? 'Modifier' : 'Ajouter'}</button></div>
     </form>
@@ -599,6 +627,29 @@ function openInspectorForm(inspector = null) {
     formData.append('telephone', document.getElementById('f-tel').value);
     formQuals.forEach((q, i) => { const el = document.getElementById(`q-tit-${i}`); if (el) q.titularisation = el.value; });
     formData.append('qualifications', JSON.stringify(formQuals.filter(q => q.domaine)));
+    // Lien formateur
+    if (document.getElementById('f-is-formateur')) {
+      const isFrm = document.getElementById('f-is-formateur').checked;
+      formData.append('is_formateur', isFrm ? 'true' : 'false');
+      if (isFrm) {
+        if (formMatchedFormateur?.id || formInsLinkedFormateur?.id) {
+          formData.append('formateur_id', String(formMatchedFormateur?.id || formInsLinkedFormateur?.id));
+        } else {
+          // Lire les valeurs du DOM (compétences + formations)
+          const comps = [];
+          document.querySelectorAll('.ins-comp-row').forEach(row => {
+            const t = row.querySelector('[data-comp-type]')?.value?.trim() || '';
+            const d = row.querySelector('[data-comp-dom]')?.value?.trim() || '';
+            if (t) comps.push({ type_competence: t, domaine: d });
+          });
+          const dels = [...document.querySelectorAll('[data-form-delivree]')].map(i => i.value.trim()).filter(Boolean);
+          const devs = [...document.querySelectorAll('[data-form-developpee]')].map(i => i.value.trim()).filter(Boolean);
+          formData.append('formateur_competences', JSON.stringify(comps));
+          formData.append('formateur_formations_delivrees', JSON.stringify(dels));
+          formData.append('formateur_formations_developpees', JSON.stringify(devs));
+        }
+      }
+    }
     const cvFile = document.getElementById('f-cv').files[0];
     if (cvFile) formData.append('cv', cvFile);
     const btn = document.getElementById('save-btn'); btn.disabled = true; btn.textContent = 'Enregistrement...';
@@ -614,12 +665,125 @@ function openInspectorForm(inspector = null) {
   });
 }
 
+function renderInsFormateurSection(inspectorId) {
+  // 1) Inspecteur déjà lié à un formateur existant
+  if (formInsLinkedFormateur) {
+    const f = formInsLinkedFormateur;
+    return `<div class="alert alert-info" style="background:#ebf8ff;border-left:3px solid #3182ce;padding:0.75rem;border-radius:4px;font-size:0.9rem">
+      Déjà formateur — <strong>${esc(f.reference)}</strong> ${esc(f.nom)} ${esc(f.prenom)} (${esc(f.etat)}).
+      Modifier les compétences et formations dans le menu <em>Formateurs</em>.
+    </div>`;
+  }
+  // 2) Match trouvé sur la base nom+prénom+état
+  if (formMatchedFormateur) {
+    const f = formMatchedFormateur;
+    return `<div class="alert alert-info" style="background:#fffbeb;border-left:3px solid #d69e2e;padding:0.75rem;border-radius:4px;font-size:0.9rem">
+      Un formateur correspondant existe : <strong>${esc(f.reference)}</strong> ${esc(f.nom)} ${esc(f.prenom)} (${esc(f.etat)}).
+      Il sera lié à cet inspecteur lors de l'enregistrement.
+    </div>`;
+  }
+  // 3) Pas de correspondance — saisie des champs formateur
+  return `
+    <div style="background:#f7fafc;border:1px solid #e2e8f0;padding:0.75rem;border-radius:4px;margin-bottom:0.5rem;font-size:0.85rem;color:#4a5568">
+      Aucun formateur correspondant trouvé. Renseignez les compétences et formations ci-dessous, un nouveau profil formateur sera créé et lié.
+    </div>
+    <div style="margin:0.5rem 0">
+      <strong style="font-size:0.9rem">Compétences</strong>
+      <button type="button" class="btn btn-sm btn-outline" style="margin-left:0.5rem" onclick="addInsComp()">+ Ajouter</button>
+    </div>
+    <div id="ins-comps-container">${renderInsCompsRows()}</div>
+    <div style="margin:0.75rem 0 0.5rem">
+      <strong style="font-size:0.9rem">Formations délivrées</strong>
+      <button type="button" class="btn btn-sm btn-outline" style="margin-left:0.5rem" onclick="addInsFormDelivree()">+ Ajouter</button>
+    </div>
+    <div id="ins-form-delivrees-container">${renderInsFormList('delivree')}</div>
+    <div style="margin:0.75rem 0 0.5rem">
+      <strong style="font-size:0.9rem">Formations développées</strong>
+      <button type="button" class="btn btn-sm btn-outline" style="margin-left:0.5rem" onclick="addInsFormDeveloppee()">+ Ajouter</button>
+    </div>
+    <div id="ins-form-developpees-container">${renderInsFormList('developpee')}</div>
+  `;
+}
+
+function renderInsCompsRows() {
+  const types = (typeof FORMATEUR_TYPES !== 'undefined' && FORMATEUR_TYPES.length) ? FORMATEUR_TYPES : ['Formateur National','Formateur Régional','Formateur International'];
+  return formInsCompetences.map((c, i) => `
+    <div class="form-row ins-comp-row">
+      <div class="form-group"><label>Type</label><select data-comp-type><option value="">Sélectionner</option>${types.map(t => `<option value="${t}" ${c.type_competence === t ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
+      <div class="form-group"><label>Domaine</label><select data-comp-dom><option value="">Tous domaines</option>${DOMAINES.map(d => `<option value="${d}" ${c.domaine === d ? 'selected' : ''}>${DOMAINE_LABELS[d] || d}</option>`).join('')}</select></div>
+      ${formInsCompetences.length > 1 ? `<button type="button" class="btn-icon btn-danger" style="align-self:flex-end;margin-bottom:0.5rem" onclick="removeInsComp(${i})"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>` : ''}
+    </div>
+  `).join('');
+}
+
+function renderInsFormList(type) {
+  const arr = type === 'delivree' ? formInsFormDelivrees : formInsFormDeveloppees;
+  const attr = type === 'delivree' ? 'data-form-delivree' : 'data-form-developpee';
+  const removeFn = type === 'delivree' ? 'removeInsFormDelivree' : 'removeInsFormDeveloppee';
+  return arr.map((v, i) => `
+    <div class="form-row" style="align-items:center">
+      <div class="form-group" style="flex:1"><input type="text" ${attr} value="${esc(v)}" placeholder="Description de la formation"></div>
+      ${arr.length > 1 ? `<button type="button" class="btn-icon btn-danger" style="margin-bottom:0.5rem" onclick="${removeFn}(${i})"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>` : ''}
+    </div>
+  `).join('');
+}
+
+function addInsComp() { _captureInsCompState(); formInsCompetences.push({ type_competence: '', domaine: '' }); document.getElementById('ins-comps-container').innerHTML = renderInsCompsRows(); }
+function removeInsComp(i) { _captureInsCompState(); formInsCompetences.splice(i, 1); if (formInsCompetences.length === 0) formInsCompetences.push({ type_competence: '', domaine: '' }); document.getElementById('ins-comps-container').innerHTML = renderInsCompsRows(); }
+function _captureInsCompState() {
+  const rows = document.querySelectorAll('.ins-comp-row');
+  formInsCompetences = [...rows].map(r => ({ type_competence: r.querySelector('[data-comp-type]')?.value || '', domaine: r.querySelector('[data-comp-dom]')?.value || '' }));
+  if (!formInsCompetences.length) formInsCompetences = [{ type_competence: '', domaine: '' }];
+}
+function addInsFormDelivree() { formInsFormDelivrees = [...document.querySelectorAll('[data-form-delivree]')].map(i => i.value); formInsFormDelivrees.push(''); document.getElementById('ins-form-delivrees-container').innerHTML = renderInsFormList('delivree'); }
+function removeInsFormDelivree(i) { formInsFormDelivrees = [...document.querySelectorAll('[data-form-delivree]')].map(i => i.value); formInsFormDelivrees.splice(i, 1); if (!formInsFormDelivrees.length) formInsFormDelivrees = ['']; document.getElementById('ins-form-delivrees-container').innerHTML = renderInsFormList('delivree'); }
+function addInsFormDeveloppee() { formInsFormDeveloppees = [...document.querySelectorAll('[data-form-developpee]')].map(i => i.value); formInsFormDeveloppees.push(''); document.getElementById('ins-form-developpees-container').innerHTML = renderInsFormList('developpee'); }
+function removeInsFormDeveloppee(i) { formInsFormDeveloppees = [...document.querySelectorAll('[data-form-developpee]')].map(i => i.value); formInsFormDeveloppees.splice(i, 1); if (!formInsFormDeveloppees.length) formInsFormDeveloppees = ['']; document.getElementById('ins-form-developpees-container').innerHTML = renderInsFormList('developpee'); }
+
+async function toggleInsFormateur(checked) {
+  const sec = document.getElementById('ins-formateur-section');
+  if (!sec) return;
+  if (!checked) {
+    formMatchedFormateur = null;
+    sec.style.display = 'none';
+    return;
+  }
+  // Si déjà lié (édition d'un inspecteur déjà formateur), pas besoin de match
+  if (formInsLinkedFormateur) {
+    sec.style.display = '';
+    sec.innerHTML = renderInsFormateurSection();
+    return;
+  }
+  // Sinon : appel /api/formateurs/match
+  const nom = document.getElementById('f-nom')?.value?.trim() || '';
+  const prenom = document.getElementById('f-prenom')?.value?.trim() || '';
+  const etat = document.getElementById('f-etat-form')?.value?.trim() || '';
+  const email = document.getElementById('f-email')?.value?.trim() || '';
+  if (!nom || !prenom || !etat) {
+    showMessage('Renseignez Nom, Prénom et État avant de cocher cette option', 'error');
+    document.getElementById('f-is-formateur').checked = false;
+    return;
+  }
+  sec.style.display = '';
+  sec.innerHTML = '<div style="padding:0.75rem;color:#4a5568;font-size:0.9rem">Recherche d\'un formateur correspondant...</div>';
+  try {
+    const params = new URLSearchParams({ nom, prenom, etat });
+    if (email) params.set('email', email);
+    const data = await api(`/formateurs/match?${params.toString()}`);
+    formMatchedFormateur = data?.match || null;
+  } catch (_e) { formMatchedFormateur = null; }
+  sec.innerHTML = renderInsFormateurSection();
+}
+
 function renderQualsRows() {
-  return formQuals.map((q, i) => `
+  return formQuals.map((q, i) => {
+    const opts = (q.domaine && SPECIALITES_BY_DOMAINE[q.domaine]) ? SPECIALITES_BY_DOMAINE[q.domaine] : SPECIALITES;
+    const placeholder = q.domaine ? `Sp\u00e9cialit\u00e9s du domaine ${q.domaine}` : 'S\u00e9lectionnez d\'abord un domaine';
+    return `
     <div class="qual-form-row">
       <div class="form-row">
         <div class="form-group"><label>Domaine</label><select onchange="updateQual(${i},'domaine',this.value)"><option value="">S\u00e9lectionner</option>${DOMAINES.map(d => `<option value="${d}" ${q.domaine === d ? 'selected' : ''}>${d}</option>`).join('')}</select></div>
-        <div class="form-group"><label>Sp\u00e9cialit\u00e9</label><input type="text" list="dl-spec" value="${esc(q.specialite)}" oninput="updateQual(${i},'specialite',this.value)" placeholder="Saisir ou s\u00e9lectionner"><datalist id="dl-spec">${SPECIALITES.map(s => `<option value="${s}">`).join('')}</datalist></div>
+        <div class="form-group"><label>Sp\u00e9cialit\u00e9</label><input type="text" list="dl-spec-${i}" value="${esc(q.specialite)}" oninput="updateQual(${i},'specialite',this.value)" placeholder="${placeholder}" ${!q.domaine ? 'disabled' : ''}><datalist id="dl-spec-${i}">${opts.map(s => `<option value="${esc(s)}">`).join('')}</datalist></div>
       </div>
       <div class="form-row">
         <div class="form-group"><label>Niveau</label><select onchange="updateQual(${i},'niveau',this.value)"><option value="">S\u00e9lectionner</option>${NIVEAUX.map(n => `<option value="${n}" ${q.niveau === n ? 'selected' : ''}>${n}</option>`).join('')}</select></div>
@@ -628,10 +792,24 @@ function renderQualsRows() {
         ${formQuals.length > 1 ? `<button type="button" class="btn-icon btn-danger" style="align-self:flex-end;margin-bottom:0.5rem" onclick="removeQualRow(${i})"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>` : ''}
       </div>
     </div>
-  `).join('');
+  `;
+  }).join('');
 }
 
-function updateQual(idx, field, value) { formQuals[idx][field] = value; if (field === 'niveau') { if (value === 'Inspecteur Stagiaire') formQuals[idx].titularisation = ''; document.getElementById('quals-container').innerHTML = renderQualsRows(); } }
+function updateQual(idx, field, value) {
+  formQuals[idx][field] = value;
+  if (field === 'domaine') {
+    // Reset spécialité si elle n'appartient pas au nouveau domaine
+    const allowed = SPECIALITES_BY_DOMAINE[value] || [];
+    if (formQuals[idx].specialite && allowed.length && !allowed.includes(formQuals[idx].specialite)) {
+      formQuals[idx].specialite = '';
+    }
+    document.getElementById('quals-container').innerHTML = renderQualsRows();
+  } else if (field === 'niveau') {
+    if (value === 'Inspecteur Stagiaire') formQuals[idx].titularisation = '';
+    document.getElementById('quals-container').innerHTML = renderQualsRows();
+  }
+}
 function addQualRow() { formQuals.push({ domaine: '', specialite: '', niveau: '', experience: '', titularisation: '' }); document.getElementById('quals-container').innerHTML = renderQualsRows(); }
 function removeQualRow(idx) { formQuals.splice(idx, 1); document.getElementById('quals-container').innerHTML = renderQualsRows(); }
 async function editInspector(id) { try { const ins = await api(`/inspectors/${id}`); openInspectorForm(ins); } catch (err) { showMessage(err.message, 'error'); } }
@@ -1176,14 +1354,15 @@ function renderFormateursContent() {
             <button onclick="exportFormateursFile('csv')" class="export-item"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#38a169" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span>Export CSV</span><small>.csv</small></button>
             <button onclick="exportFormateursFile('excel')" class="export-item"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#1a7f37" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span>Export Excel</span><small>.xlsx</small></button>
             <button onclick="exportFormateursFile('pdf')" class="export-item"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span>Export PDF</span><small>.pdf</small></button>
+            ${state.user?.role === 'Administrateur' ? `<div style="border-top:1px solid #e2e8f0;margin:0.25rem 0"></div><button onclick="downloadImportTemplate('formateurs')" class="export-item"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3182ce" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span>Modèle d'import</span><small>.xlsx</small></button>` : ''}
           </div>
         </div>
-        ${state.user?.role === 'Administrateur' ? `<button class="btn btn-outline btn-sm" title="Télécharger le modèle Excel" onclick="downloadImportTemplate('formateurs')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Modèle</button><button class="btn btn-outline btn-sm" onclick="document.getElementById('import-frm-file').click()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> Importer Excel</button><input type="file" id="import-frm-file" accept=".xlsx" style="display:none" onchange="importFormateurs(this)">` : ''}
+        ${state.user?.role === 'Administrateur' ? `<button class="btn btn-outline btn-sm" onclick="document.getElementById('import-frm-file').click()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> Importer Excel</button><input type="file" id="import-frm-file" accept=".xlsx" style="display:none" onchange="importFormateurs(this)">` : ''}
         ${canDeactivate ? `<button class="btn btn-sm" id="frm-delete-btn" style="background:#dc2626;color:white;display:none" onclick="bulkDeleteFormateurs()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-2 14H7L5 6"/></svg> Supprimer</button>` : ''}
         ${canAdd ? `<button class="btn btn-primary btn-sm" onclick="openFormateurForm()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Formateur</button>` : ''}
       </div>
     </div>
-    <div class="results-info" style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap"><span>${formateursData.total} formateur${formateursData.total > 1 ? 's' : ''} trouv\u00e9${formateursData.total > 1 ? 's' : ''}</span><label style="display:flex;align-items:center;gap:0.5rem;font-size:0.875rem">Afficher <select onchange="changeFrmPageSize(this.value)" style="padding:0.25rem 0.5rem">${[10,25,50,100,200].map(n=>`<option value="${n}" ${frmPageSize===n?'selected':''}>${n}</option>`).join('')}</select> par page</label></div>
+    <div class="results-info" style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap"><span>${formateursData.total} formateur${formateursData.total > 1 ? 's' : ''} trouv\u00e9${formateursData.total > 1 ? 's' : ''}</span><label style="display:flex;align-items:center;gap:0.5rem;font-size:0.875rem;white-space:nowrap">Afficher <select onchange="changeFrmPageSize(this.value)" style="padding:0.25rem 0.5rem">${[10,25,50,100,200].map(n=>`<option value="${n}" ${frmPageSize===n?'selected':''}>${n}</option>`).join('')}</select> par page</label></div>
     <div class="table-container"><table class="data-table">
       <thead><tr>${canDeactivate ? '<th style="width:30px"><input type="checkbox" onchange="toggleAllFormateurs(this.checked)"></th>' : ''}<th class="sortable" style="display:none" onclick="frmSortBy('reference')">R\u00e9f.${frmSortIcon('reference')}</th><th class="sortable" onclick="frmSortBy('nom')">Nom et Pr\u00e9nom${frmSortIcon('nom')}</th><th class="sortable" onclick="frmSortBy('etat')">\u00c9tat${frmSortIcon('etat')}</th><th>Comp\u00e9tences</th><th class="sortable" onclick="frmSortBy('is_inspecteur')">Inspecteur${frmSortIcon('is_inspecteur')}</th><th>Actions</th></tr></thead>
       <tbody>
@@ -1321,7 +1500,7 @@ function openFormateurForm(formateur = null) {
           <div class="form-group"><label>Pi\u00e8ce jointe (CV)</label><input type="file" id="frm-cv" accept=".pdf,.doc,.docx"></div>
         </div>
         <div class="form-row">
-          <div class="form-group"><label style="display:flex;align-items:center;gap:0.5rem"><input type="checkbox" id="frm-inspecteur" ${formateur?.is_inspecteur ? 'checked' : ''}> Ce formateur est aussi inspecteur</label></div>
+          <div class="form-group" style="align-self:flex-start"><label style="display:inline-flex;align-items:center;gap:0.35rem;white-space:nowrap;cursor:pointer;margin:0"><input type="checkbox" id="frm-inspecteur" ${formateur?.is_inspecteur ? 'checked' : ''} style="margin:0">Ce formateur est aussi inspecteur</label></div>
         </div>
         <h4 style="margin-top:1.5rem">Comp\u00e9tences <button type="button" class="btn btn-sm btn-outline" style="margin-left:1rem" onclick="addFrmComp()">+ Ajouter</button></h4>
         <div id="frm-comps-container">${renderFrmComps()}</div>
