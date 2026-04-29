@@ -159,10 +159,12 @@ def get_db():
         conn = psycopg2.connect(DATABASE_URL, sslmode='require', connect_timeout=10)
         return PgCursorWrapper(conn)
     else:
-        db = sqlite3.connect(DB_PATH, timeout=10)
+        db = sqlite3.connect(DB_PATH, timeout=30)
         db.row_factory = sqlite3.Row
+        db.execute("PRAGMA busy_timeout = 30000")
         db.execute("PRAGMA foreign_keys = ON")
         db.execute("PRAGMA journal_mode = WAL")
+        db.execute("PRAGMA synchronous = NORMAL")
         return db
 
 def init_db():
@@ -412,6 +414,12 @@ def init_db():
         db.commit()
     # Migration auto-lien inspecteur <-> formateur (idempotent)
     try:
+        # Nettoyer les liens orphelins (inspector_id pointant vers un inspecteur inexistant)
+        db.execute("""
+            UPDATE formateurs SET inspector_id = NULL, is_inspecteur = 0
+            WHERE inspector_id IS NOT NULL
+              AND NOT EXISTS (SELECT 1 FROM inspectors i WHERE i.id = formateurs.inspector_id AND i.is_active = 1)
+        """)
         # Lien par nom+prenom+etat
         db.execute("""
             UPDATE formateurs SET inspector_id = (
@@ -891,6 +899,92 @@ def _handle_formateur_link(db, inspector_id, nom, prenom, etat, email, telephone
             pass
     return (fid, 'created')
 
+@app.route('/api/formateurs/unlinked-matches', methods=['GET'])
+@auth_required
+def formateurs_unlinked_matches():
+    """Liste les paires (inspecteur, formateur) à valider :
+    - formateur non lié (inspector_id NULL) avec une correspondance nom+prénom+état
+    - formateur lié mais is_inspecteur = 0 (incohérence à corriger)
+    """
+    if request.user['role'] != 'Administrateur':
+        return jsonify({'error': 'Non autorisé'}), 403
+    db = get_db()
+    try:
+        # 1) Formateurs non liés avec correspondance
+        unlinked = db.execute("""
+            SELECT i.id AS inspector_id, i.reference AS inspector_ref, i.nom AS nom, i.prenom AS prenom, i.etat AS etat,
+                   i.email AS i_email,
+                   f.id AS formateur_id, f.reference AS formateur_ref, f.email AS f_email,
+                   f.is_inspecteur AS f_is_inspecteur,
+                   'unlinked' AS reason
+            FROM inspectors i
+            JOIN formateurs f
+              ON UPPER(TRIM(i.nom))    = UPPER(TRIM(f.nom))
+             AND UPPER(TRIM(i.prenom)) = UPPER(TRIM(f.prenom))
+             AND TRIM(i.etat)          = TRIM(f.etat)
+            WHERE i.is_active = 1 AND f.is_active = 1 AND f.inspector_id IS NULL
+        """).fetchall()
+        # 2) Formateurs liés mais is_inspecteur = 0 (à corriger)
+        linked_no_flag = db.execute("""
+            SELECT i.id AS inspector_id, i.reference AS inspector_ref,
+                   COALESCE(i.nom, f.nom) AS nom, COALESCE(i.prenom, f.prenom) AS prenom, COALESCE(i.etat, f.etat) AS etat,
+                   i.email AS i_email,
+                   f.id AS formateur_id, f.reference AS formateur_ref, f.email AS f_email,
+                   f.is_inspecteur AS f_is_inspecteur,
+                   'flag_missing' AS reason
+            FROM formateurs f
+            JOIN inspectors i ON i.id = f.inspector_id AND i.is_active = 1
+            WHERE f.is_active = 1 AND f.inspector_id IS NOT NULL AND COALESCE(f.is_inspecteur, 0) = 0
+        """).fetchall()
+        all_rows = [dict(r) for r in unlinked] + [dict(r) for r in linked_no_flag]
+        all_rows.sort(key=lambda r: ((r.get('etat') or ''), (r.get('nom') or ''), (r.get('prenom') or '')))
+        return jsonify({'matches': all_rows})
+    finally:
+        db.close()
+
+@app.route('/api/formateurs/bulk-link', methods=['POST'])
+@auth_required
+def formateurs_bulk_link():
+    """Lie les paires inspecteur<->formateur sélectionnées."""
+    if request.user['role'] != 'Administrateur':
+        return jsonify({'error': 'Non autorisé'}), 403
+    pairs = (request.json or {}).get('pairs') or []
+    if not isinstance(pairs, list) or not pairs:
+        return jsonify({'error': 'Aucune paire fournie'}), 400
+    db = get_db()
+    linked = 0
+    try:
+        for p in pairs:
+            try:
+                ins_id = int(p.get('inspector_id'))
+                frm_id = int(p.get('formateur_id'))
+            except (ValueError, TypeError):
+                continue
+            chk = db.execute("SELECT id, inspector_id, is_inspecteur FROM formateurs WHERE id = ?", (frm_id,)).fetchone()
+            if not chk:
+                continue
+            # Cas A: formateur déjà lié au bon inspecteur mais flag is_inspecteur=0 → corriger juste le flag
+            if chk['inspector_id'] and chk['inspector_id'] == ins_id:
+                if not chk['is_inspecteur']:
+                    db.execute("UPDATE formateurs SET is_inspecteur = 1, updated_at = datetime('now') WHERE id = ?", (frm_id,))
+                    linked += 1
+                continue
+            # Cas B: formateur déjà lié à un autre inspecteur → ne pas écraser
+            if chk['inspector_id'] and chk['inspector_id'] != ins_id:
+                continue
+            # Cas C: formateur non lié → lier + flag
+            db.execute("UPDATE formateurs SET inspector_id = ?, is_inspecteur = 1, updated_at = datetime('now') WHERE id = ?",
+                       (ins_id, frm_id))
+            linked += 1
+        log_activity(db, request.user['id'], 'BULK_LINK_FORMATEUR', f"Lien en masse: {linked} paire(s)")
+        db.commit()
+        return jsonify({'message': f'{linked} formateur(s) lié(s) avec succès', 'linked': linked})
+    except Exception as e:
+        db.rollback()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        db.close()
+
 @app.route('/api/formateurs/match', methods=['GET'])
 @auth_required
 def formateur_match():
@@ -1203,6 +1297,169 @@ def import_template_formateurs():
     return send_file(out, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                      as_attachment=True, download_name='modele_import_formateurs.xlsx')
 
+def _parse_inspector_row(row):
+    """Extrait et nettoie une ligne du fichier Excel inspecteurs."""
+    if not row or not row[1]:
+        return None
+    nom    = str(row[1] or '').strip()
+    prenom = str(row[2] or '').strip()
+    etat   = str(row[3] or '').strip()
+    if not nom or not etat:
+        return None
+    titularisation = ''
+    if len(row) > 10 and row[10]:
+        tv = row[10]
+        titularisation = tv.strftime('%Y-%m') if hasattr(tv, 'strftime') else str(tv).strip()[:7]
+    return {
+        'nom': nom, 'prenom': prenom, 'etat': etat,
+        'email': str(row[4] or '').strip(),
+        'telephone': str(row[5] or '').strip(),
+        'domaine': str(row[6] or '').strip(),
+        'specialite': str(row[7] or '').strip(),
+        'niveau': str(row[8] or '').strip(),
+        'experience': str(row[9] or '').strip(),
+        'titularisation': titularisation,
+    }
+
+@app.route('/api/inspectors/import-preview', methods=['POST'])
+@auth_required
+def import_inspectors_preview():
+    if request.user['role'] != 'Administrateur':
+        return jsonify({'error': 'Non autorisé'}), 403
+    file = request.files.get('file')
+    if not file:
+        return jsonify({'error': 'Fichier requis'}), 400
+    db = None
+    try:
+        wb = openpyxl.load_workbook(file)
+        ws = wb.active
+        db = get_db()
+        rows_out = []
+        seen_keys = set()  # (nom,prenom,etat) déjà vus dans le fichier
+        for idx, raw in enumerate(ws.iter_rows(min_row=5, values_only=True), start=5):
+            r = _parse_inspector_row(raw)
+            if not r:
+                continue
+            key = (r['nom'].upper(), r['prenom'].upper(), r['etat'])
+            file_dup = key in seen_keys
+            seen_keys.add(key)
+            existing = db.execute("SELECT id, email, telephone FROM inspectors WHERE nom = ? AND prenom = ? AND etat = ?",
+                                  (r['nom'], r['prenom'], r['etat'])).fetchone()
+            status = 'new'; note = ''
+            if file_dup:
+                status = 'duplicate'; note = 'Doublon dans le fichier (Nom+Prénom+État déjà présent)'
+            elif existing:
+                changed = ((r['email'] or '') != (existing['email'] or '')) or ((r['telephone'] or '') != (existing['telephone'] or ''))
+                if r['domaine']:
+                    qexist = db.execute("SELECT id FROM qualifications WHERE inspector_id = ? AND domaine = ? AND specialite = ? AND niveau = ?",
+                                        (existing['id'], r['domaine'], r['specialite'], r['niveau'])).fetchone()
+                    if qexist and not changed:
+                        status = 'duplicate'; note = 'Inspecteur et qualification déjà existants'
+                    elif qexist and changed:
+                        status = 'update'; note = 'Email/téléphone modifiés ; qualification déjà présente'
+                    else:
+                        status = 'update'; note = 'Inspecteur existant ; nouvelle qualification'
+                else:
+                    status = 'duplicate' if not changed else 'update'
+                    note = 'Inspecteur existant' + (' (sans changement)' if status == 'duplicate' else ' (email/tél. modifiés)')
+            r['idx'] = idx; r['status'] = status; r['note'] = note
+            rows_out.append(r)
+        counts = {'new': 0, 'update': 0, 'duplicate': 0}
+        for r in rows_out: counts[r['status']] = counts.get(r['status'], 0) + 1
+        return jsonify({'rows': rows_out, 'counts': counts, 'total': len(rows_out)})
+    except Exception as e:
+        return jsonify({'error': f"Erreur de prévisualisation : {str(e)}"}), 400
+    finally:
+        if db:
+            try: db.close()
+            except Exception: pass
+
+@app.route('/api/inspectors/import-apply', methods=['POST'])
+@auth_required
+def import_inspectors_apply():
+    if request.user['role'] != 'Administrateur':
+        return jsonify({'error': 'Non autorisé'}), 403
+    payload = request.json or {}
+    rows = payload.get('rows') or []
+    if not isinstance(rows, list):
+        return jsonify({'error': 'Format invalide'}), 400
+    db = None
+    try:
+        db = get_db()
+        default_pw_hash = bcrypt.hashpw(b'12345', bcrypt.gensalt()).decode()
+        # Grouper les lignes par clé (nom, prénom, état) pour traiter chaque personne en une fois
+        groups = {}
+        skip_count = 0
+        for r in rows:
+            if r.get('status') == 'duplicate':
+                skip_count += 1
+                continue
+            nom    = (r.get('nom') or '').strip()
+            prenom = (r.get('prenom') or '').strip()
+            etat   = (r.get('etat') or '').strip()
+            if not nom or not etat:
+                continue
+            key = (nom.upper(), prenom.upper(), etat)
+            groups.setdefault(key, []).append(r)
+        new_count = upd_count = 0
+        for key, grp in groups.items():
+            first = grp[0]
+            nom    = (first.get('nom') or '').strip()
+            prenom = (first.get('prenom') or '').strip()
+            etat   = (first.get('etat') or '').strip()
+            email     = (first.get('email') or '').strip()
+            telephone = (first.get('telephone') or '').strip()
+            existing = db.execute("SELECT id FROM inspectors WHERE nom = ? AND prenom = ? AND etat = ?",
+                                  (nom, prenom, etat)).fetchone()
+            if existing:
+                ins_id = existing['id']
+                # Remplacer les valeurs de l'inspecteur
+                db.execute("UPDATE inspectors SET email = ?, telephone = ?, updated_at = datetime('now') WHERE id = ?",
+                           (email, telephone, ins_id))
+                # REMPLACER toutes les qualifications par celles du fichier
+                db.execute("DELETE FROM qualifications WHERE inspector_id = ?", (ins_id,))
+                upd_count += 1
+            else:
+                ref = generate_reference(db)
+                cur = db.execute("INSERT INTO inspectors (reference, nom, prenom, etat, email, telephone) VALUES (?, ?, ?, ?, ?, ?)",
+                                 (ref, nom, prenom, etat, email, telephone))
+                ins_id = cur.lastrowid
+                if not ins_id:
+                    row = db.execute("SELECT id FROM inspectors WHERE reference = ?", (ref,)).fetchone()
+                    ins_id = row['id'] if row else None
+                if email and ins_id:
+                    db.execute("INSERT OR IGNORE INTO users (username, password, role, inspector_id, must_change_password) VALUES (?, ?, 'National 2', ?, 1)",
+                               (email, default_pw_hash, ins_id))
+                new_count += 1
+            # Insérer les qualifications du fichier (toutes les lignes du groupe)
+            seen_quals = set()
+            for r in grp:
+                domaine    = (r.get('domaine') or '').strip()
+                if not domaine or not ins_id:
+                    continue
+                specialite = (r.get('specialite') or '').strip()
+                niveau     = (r.get('niveau') or '').strip()
+                experience = (r.get('experience') or '').strip()
+                titularisation = (r.get('titularisation') or '').strip()
+                qkey = (domaine.upper(), specialite.upper(), niveau.upper())
+                if qkey in seen_quals:
+                    continue
+                seen_quals.add(qkey)
+                db.execute("INSERT INTO qualifications (inspector_id, domaine, specialite, niveau, experience, titularisation) VALUES (?, ?, ?, ?, ?, ?)",
+                           (ins_id, domaine, specialite, niveau, experience, titularisation))
+        log_activity(db, request.user['id'], 'IMPORT', f"Import: {new_count} nouveaux, {upd_count} maj, {skip_count} doublons ignorés")
+        db.commit()
+        return jsonify({'message': f'{new_count} nouveau(x), {upd_count} mise(s) à jour, {skip_count} doublon(s) ignoré(s)'})
+    except Exception as e:
+        if db:
+            try: db.rollback()
+            except Exception: pass
+        return jsonify({'error': f"Erreur : {str(e)}"}), 400
+    finally:
+        if db:
+            try: db.close()
+            except Exception: pass
+
 @app.route('/api/inspectors/import', methods=['POST'])
 @auth_required
 def import_inspectors():
@@ -1211,15 +1468,17 @@ def import_inspectors():
     file = request.files.get('file')
     if not file:
         return jsonify({'error': 'Fichier requis'}), 400
+    db = None
     try:
         wb = openpyxl.load_workbook(file)
         ws = wb.active
         db = get_db()
+        # Précalcul du hash bcrypt par défaut (coûteux ~100ms — fait UNE fois hors boucle)
+        default_pw_hash = bcrypt.hashpw(b'12345', bcrypt.gensalt()).decode()
         count = 0
         for row in ws.iter_rows(min_row=5, values_only=True):
             if not row or not row[1]:
                 continue
-            ref_val = row[0] or ''
             nom = str(row[1] or '').strip()
             prenom = str(row[2] or '').strip()
             etat = str(row[3] or '').strip()
@@ -1244,24 +1503,31 @@ def import_inspectors():
                 db.execute("UPDATE inspectors SET email = ?, telephone = ?, updated_at = datetime('now') WHERE id = ?", (email, telephone, ins_id))
             else:
                 ref = generate_reference(db)
-                db.execute("INSERT INTO inspectors (reference, nom, prenom, etat, email, telephone) VALUES (?, ?, ?, ?, ?, ?)",
+                cur = db.execute("INSERT INTO inspectors (reference, nom, prenom, etat, email, telephone) VALUES (?, ?, ?, ?, ?, ?)",
                            (ref, nom, prenom, etat, email, telephone))
-                ins_id = db.lastrowid
-                if email:
-                    default_pw = '12345'
-                    hashed = bcrypt.hashpw(default_pw.encode(), bcrypt.gensalt()).decode()
+                ins_id = cur.lastrowid
+                if not ins_id:
+                    row = db.execute("SELECT id FROM inspectors WHERE reference = ?", (ref,)).fetchone()
+                    ins_id = row['id'] if row else None
+                if email and ins_id:
                     db.execute("INSERT OR IGNORE INTO users (username, password, role, inspector_id, must_change_password) VALUES (?, ?, 'National 2', ?, 1)",
-                               (email, hashed, ins_id))
+                               (email, default_pw_hash, ins_id))
                 count += 1
             if domaine:
                 db.execute("INSERT INTO qualifications (inspector_id, domaine, specialite, niveau, experience, titularisation) VALUES (?, ?, ?, ?, ?, ?)",
                            (ins_id, domaine, specialite, niveau, experience, titularisation))
         log_activity(db, request.user['id'], 'IMPORT', f"Import Excel: {count} nouveaux inspecteurs")
         db.commit()
-        db.close()
         return jsonify({'message': f'{count} inspecteur(s) importé(s) avec succès'})
     except Exception as e:
+        if db:
+            try: db.rollback()
+            except Exception: pass
         return jsonify({'error': f"Erreur d'import: {str(e)}"}), 400
+    finally:
+        if db:
+            try: db.close()
+            except Exception: pass
 
 @app.route('/api/inspectors/<int:id>/email', methods=['POST'])
 @auth_required
@@ -2346,9 +2612,12 @@ def add_formateur():
                 ext = file.filename.rsplit('.', 1)[-1] if '.' in file.filename else 'pdf'
                 cv_path = f"cv-frm-{secrets.token_hex(8)}.{ext}"
                 file.save(os.path.join(UPLOAD_DIR, cv_path))
-        db.execute("INSERT INTO formateurs (reference, nom, prenom, etat, email, telephone, cv_path, is_inspecteur) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        cur = db.execute("INSERT INTO formateurs (reference, nom, prenom, etat, email, telephone, cv_path, is_inspecteur) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                    (ref, nom, prenom, etat, email, telephone, cv_path, is_inspecteur))
-        frm_id = db.lastrowid
+        frm_id = cur.lastrowid
+        if not frm_id:
+            row = db.execute("SELECT id FROM formateurs WHERE reference = ?", (ref,)).fetchone()
+            frm_id = row['id'] if row else None
         competences_json = request.form.get('competences', '[]')
         for c in json.loads(competences_json):
             if c.get('type_competence'):
@@ -2477,11 +2746,36 @@ def send_formateur_email(id):
     mailto = f"mailto:{f['email']}?subject={urllib.parse.quote(subject)}&body={urllib.parse.quote(body)}"
     return jsonify({'message': f"Ouverture du client email pour {f['email']}", 'mailto': mailto})
 
+def _build_formateurs_export_rows(db):
+    """Construit les lignes d'export alignées sur le format d'import :
+    une ligne par (formateur, compétence). Formations agrégées (séparées par ';').
+    Retourne (rows, total_formateurs)."""
+    formateurs = db.execute("SELECT * FROM formateurs WHERE is_active = 1 ORDER BY etat, nom, prenom").fetchall()
+    out = []
+    for f in formateurs:
+        comps = db.execute("SELECT type_competence, domaine FROM formateur_competences WHERE formateur_id = ? ORDER BY type_competence, domaine", (f['id'],)).fetchall()
+        delivrees = [r['description'] for r in db.execute("SELECT description FROM formateur_formations WHERE formateur_id = ? AND type = 'delivree' ORDER BY id", (f['id'],)).fetchall()]
+        developpees = [r['description'] for r in db.execute("SELECT description FROM formateur_formations WHERE formateur_id = ? AND type = 'developpee' ORDER BY id", (f['id'],)).fetchall()]
+        f_del = '; '.join(delivrees)
+        f_dev = '; '.join(developpees)
+        is_insp = 'Oui' if f['is_inspecteur'] else 'Non'
+        if not comps:
+            out.append([f['reference'], f['nom'], f['prenom'], f['etat'], f['email'] or '', f['telephone'] or '', is_insp, '', '', f_del, f_dev])
+        else:
+            for c in comps:
+                out.append([f['reference'], f['nom'], f['prenom'], f['etat'], f['email'] or '', f['telephone'] or '', is_insp,
+                            c['type_competence'] or '', c['domaine'] or '', f_del, f_dev])
+    return out, len(formateurs)
+
+FORMATEURS_EXPORT_HEADERS = ['Référence', 'Nom', 'Prénom', 'État', 'Email', 'Téléphone',
+                             'Aussi inspecteur', 'Type compétence', 'Domaine compétence',
+                             'Formations délivrées', 'Formations développées']
+
 @app.route('/api/formateurs/export/excel', methods=['GET'])
 @auth_required
 def export_formateurs_excel():
     db = get_db()
-    rows = db.execute("SELECT f.*, GROUP_CONCAT(DISTINCT fc.type_competence || ' - ' || fc.domaine) as competences_str FROM formateurs f LEFT JOIN formateur_competences fc ON fc.formateur_id = f.id WHERE f.is_active = 1 GROUP BY f.id ORDER BY f.etat, f.nom").fetchall()
+    rows, _ = _build_formateurs_export_rows(db)
     db.close()
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -2490,26 +2784,24 @@ def export_formateurs_excel():
     header_fill = PatternFill(start_color='1A365D', end_color='1A365D', fill_type='solid')
     header_alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
     thin_border = Border(left=Side(style='thin', color='D0D0D0'), right=Side(style='thin', color='D0D0D0'), top=Side(style='thin', color='D0D0D0'), bottom=Side(style='thin', color='D0D0D0'))
-    ws.merge_cells('A1:H1')
+    n = len(FORMATEURS_EXPORT_HEADERS)
+    last_col = get_column_letter(n)
+    ws.merge_cells(f'A1:{last_col}1')
     ws['A1'].value = 'UEMOA - Base de données des Formateurs'
     ws['A1'].font = Font(name='Calibri', bold=True, size=14, color='1A365D')
     ws['A1'].alignment = Alignment(horizontal='center', vertical='center')
     ws.row_dimensions[1].height = 35
-    ws.merge_cells('A2:H2')
+    ws.merge_cells(f'A2:{last_col}2')
     ws['A2'].value = 'Exporté le ' + datetime.now().strftime(_DT_FMT)
     ws['A2'].font = Font(name='Calibri', italic=True, size=10, color='666666')
     ws['A2'].alignment = Alignment(horizontal='center')
     ws.row_dimensions[3].height = 8
-    headers = ['Référence', 'Nom', 'Prénom', 'État', 'Email', 'Téléphone', 'Compétences', 'Inspecteur']
-    for col_idx, header in enumerate(headers, 1):
+    for col_idx, header in enumerate(FORMATEURS_EXPORT_HEADERS, 1):
         cell = ws.cell(row=4, column=col_idx, value=header)
-        cell.font = header_font
-        cell.fill = header_fill
-        cell.alignment = header_alignment
-        cell.border = thin_border
+        cell.font = header_font; cell.fill = header_fill; cell.alignment = header_alignment; cell.border = thin_border
+    ws.row_dimensions[4].height = 32
     alt_fill = PatternFill(start_color='F7FAFC', end_color='F7FAFC', fill_type='solid')
-    for row_idx, r in enumerate(rows, 5):
-        data = [r['reference'], r['nom'], r['prenom'], r['etat'], r['email'] or '', r['telephone'] or '', r['competences_str'] or '', 'Oui' if r['is_inspecteur'] else 'Non']
+    for row_idx, data in enumerate(rows, 5):
         for col_idx, value in enumerate(data, 1):
             cell = ws.cell(row=row_idx, column=col_idx, value=value)
             cell.font = Font(name='Calibri', size=10)
@@ -2517,13 +2809,11 @@ def export_formateurs_excel():
             cell.alignment = Alignment(vertical='center', wrap_text=True)
             if (row_idx - 5) % 2 == 1:
                 cell.fill = alt_fill
-    col_widths = [16, 18, 18, 16, 28, 18, 40, 12]
+    col_widths = [16, 18, 18, 16, 28, 18, 14, 22, 18, 40, 40]
     for i, width in enumerate(col_widths, 1):
         ws.column_dimensions[get_column_letter(i)].width = width
     ws.freeze_panes = 'A5'
-    output = io.BytesIO()
-    wb.save(output)
-    output.seek(0)
+    output = io.BytesIO(); wb.save(output); output.seek(0)
     return send_file(output, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         as_attachment=True, download_name='formateurs.xlsx')
 
@@ -2531,14 +2821,14 @@ def export_formateurs_excel():
 @auth_required
 def export_formateurs_csv():
     db = get_db()
-    rows = db.execute("SELECT f.*, GROUP_CONCAT(DISTINCT fc.type_competence || COALESCE(' - ' || fc.domaine, '')) as competences_str FROM formateurs f LEFT JOIN formateur_competences fc ON fc.formateur_id = f.id WHERE f.is_active = 1 GROUP BY f.id ORDER BY f.etat, f.nom").fetchall()
+    rows, _ = _build_formateurs_export_rows(db)
     db.close()
     output = io.StringIO()
     output.write('\ufeff')
     writer = csv.writer(output, delimiter=';')
-    writer.writerow(['Référence', 'Nom', 'Prénom', 'État', 'Email', 'Téléphone', 'Compétences', 'Inspecteur'])
+    writer.writerow(FORMATEURS_EXPORT_HEADERS)
     for r in rows:
-        writer.writerow([r['reference'], r['nom'], r['prenom'], r['etat'], r['email'] or '', r['telephone'] or '', r['competences_str'] or '', 'Oui' if r['is_inspecteur'] else 'Non'])
+        writer.writerow(r)
     output.seek(0)
     return send_file(io.BytesIO(output.getvalue().encode('utf-8-sig')),
         mimetype='text/csv', as_attachment=True, download_name='formateurs.csv')
@@ -2547,7 +2837,7 @@ def export_formateurs_csv():
 @auth_required
 def export_formateurs_pdf():
     db = get_db()
-    rows = db.execute("SELECT f.*, GROUP_CONCAT(DISTINCT fc.type_competence || COALESCE(' - ' || fc.domaine, '')) as competences_str FROM formateurs f LEFT JOIN formateur_competences fc ON fc.formateur_id = f.id WHERE f.is_active = 1 GROUP BY f.id ORDER BY f.etat, f.nom").fetchall()
+    rows, _ = _build_formateurs_export_rows(db)
     db.close()
 
     def clean(text):
@@ -2610,7 +2900,8 @@ def export_formateurs_pdf():
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
 
-    cols = [('Ref.', 24), ('Nom', 32), ('Prenom', 32), ('Etat', 24), ('Email', 42), ('Tel.', 24), ('Competences', 70), ('Inspecteur', 18)]
+    cols = [('Ref.', 22), ('Nom', 24), ('Prenom', 24), ('Etat', 20), ('Email', 36), ('Tel.', 22), ('Insp.', 12),
+            ('Type comp.', 26), ('Dom. comp.', 18), ('Form. delivrees', 32), ('Form. developpees', 30)]
 
     pdf.set_font('ArialUni', 'B', 7)
     pdf.set_fill_color(26, 54, 93)
@@ -2639,14 +2930,13 @@ def export_formateurs_pdf():
             pdf.set_fill_color(255, 255, 255)
 
         pdf.set_text_color(26, 32, 44)
-        data = [
-            clean(r['reference']), clean(r['nom']), clean(r['prenom']),
-            clean(r['etat']), clean(r['email']), clean(r['telephone']),
-            clean((r['competences_str'] or '')[:55]),
-            'Oui' if r['is_inspecteur'] else 'Non',
-        ]
-        for i, (name, w) in enumerate(cols):
-            pdf.cell(w, 6, data[i], border='TB', fill=True)
+        data = [clean(str(v) if v is not None else '') for v in r]
+        # Tronquer pour tenir dans les colonnes
+        truncate = [22, 22, 22, 18, 35, 20, 6, 26, 18, 40, 38]
+        for i, (_, w) in enumerate(cols):
+            txt = data[i] if i < len(data) else ''
+            if len(txt) > truncate[i]: txt = txt[:truncate[i]-2] + '..'
+            pdf.cell(w, 6, txt, border='TB', fill=True)
         pdf.ln()
         fill = not fill
 
@@ -2654,6 +2944,173 @@ def export_formateurs_pdf():
     pdf.output(output)
     output.seek(0)
     return send_file(output, mimetype='application/pdf', as_attachment=True, download_name='formateurs.pdf')
+
+def _parse_formateur_row(row):
+    if not row or not row[1]:
+        return None
+    nom    = str(row[1] or '').strip()
+    prenom = str(row[2] or '').strip()
+    etat   = str(row[3] or '').strip()
+    if not nom or not etat:
+        return None
+    is_insp_raw = str(row[6] if len(row) > 6 else '').strip().lower()
+    return {
+        'nom': nom, 'prenom': prenom, 'etat': etat,
+        'email': str(row[4] or '').strip(),
+        'telephone': str(row[5] or '').strip(),
+        'is_inspecteur': 1 if is_insp_raw in ('oui', '1', 'yes', 'true') else 0,
+        'type_competence': str(row[7] if len(row) > 7 else '').strip(),
+        'comp_domaine':    str(row[8] if len(row) > 8 else '').strip(),
+        'f_delivrees':     str(row[9] if len(row) > 9 else '').strip(),
+        'f_developpees':   str(row[10] if len(row) > 10 else '').strip(),
+    }
+
+@app.route('/api/formateurs/import-preview', methods=['POST'])
+@auth_required
+def import_formateurs_preview():
+    if request.user['role'] != 'Administrateur':
+        return jsonify({'error': 'Non autorisé'}), 403
+    file = request.files.get('file')
+    if not file:
+        return jsonify({'error': 'Fichier requis'}), 400
+    db = None
+    try:
+        wb = openpyxl.load_workbook(file)
+        ws = wb.active
+        db = get_db()
+        rows_out = []
+        seen_keys = set()
+        for idx, raw in enumerate(ws.iter_rows(min_row=5, values_only=True), start=5):
+            r = _parse_formateur_row(raw)
+            if not r:
+                continue
+            key = (r['nom'].upper(), r['prenom'].upper(), r['etat'])
+            file_dup = key in seen_keys
+            seen_keys.add(key)
+            existing = db.execute("SELECT id, email, telephone, is_inspecteur FROM formateurs WHERE nom = ? AND prenom = ? AND etat = ?",
+                                  (r['nom'], r['prenom'], r['etat'])).fetchone()
+            status = 'new'; note = ''
+            if file_dup:
+                status = 'duplicate'; note = 'Doublon dans le fichier (Nom+Prénom+État déjà présent)'
+            elif existing:
+                changed = ((r['email'] or '') != (existing['email'] or '')) \
+                          or ((r['telephone'] or '') != (existing['telephone'] or '')) \
+                          or (int(r['is_inspecteur']) != int(existing['is_inspecteur'] or 0))
+                if r['type_competence']:
+                    cexist = db.execute("SELECT id FROM formateur_competences WHERE formateur_id = ? AND type_competence = ? AND COALESCE(domaine,'') = ?",
+                                        (existing['id'], r['type_competence'], r['comp_domaine'] or '')).fetchone()
+                    if cexist and not changed:
+                        status = 'duplicate'; note = 'Formateur et compétence déjà existants'
+                    elif cexist and changed:
+                        status = 'update'; note = 'Champs modifiés ; compétence déjà présente'
+                    else:
+                        status = 'update'; note = 'Formateur existant ; nouvelle compétence'
+                else:
+                    status = 'duplicate' if not changed else 'update'
+                    note = 'Formateur existant' + (' (sans changement)' if status == 'duplicate' else ' (champs modifiés)')
+            r['idx'] = idx; r['status'] = status; r['note'] = note
+            rows_out.append(r)
+        counts = {'new': 0, 'update': 0, 'duplicate': 0}
+        for r in rows_out: counts[r['status']] = counts.get(r['status'], 0) + 1
+        return jsonify({'rows': rows_out, 'counts': counts, 'total': len(rows_out)})
+    except Exception as e:
+        return jsonify({'error': f"Erreur de prévisualisation : {str(e)}"}), 400
+    finally:
+        if db:
+            try: db.close()
+            except Exception: pass
+
+@app.route('/api/formateurs/import-apply', methods=['POST'])
+@auth_required
+def import_formateurs_apply():
+    if request.user['role'] != 'Administrateur':
+        return jsonify({'error': 'Non autorisé'}), 403
+    payload = request.json or {}
+    rows = payload.get('rows') or []
+    if not isinstance(rows, list):
+        return jsonify({'error': 'Format invalide'}), 400
+    db = None
+    try:
+        db = get_db()
+        # Grouper par clé (nom, prénom, état)
+        groups = {}
+        skip_count = 0
+        for r in rows:
+            if r.get('status') == 'duplicate':
+                skip_count += 1
+                continue
+            nom    = (r.get('nom') or '').strip()
+            prenom = (r.get('prenom') or '').strip()
+            etat   = (r.get('etat') or '').strip()
+            if not nom or not etat:
+                continue
+            key = (nom.upper(), prenom.upper(), etat)
+            groups.setdefault(key, []).append(r)
+        new_count = upd_count = 0
+        for key, grp in groups.items():
+            first = grp[0]
+            nom    = (first.get('nom') or '').strip()
+            prenom = (first.get('prenom') or '').strip()
+            etat   = (first.get('etat') or '').strip()
+            email     = (first.get('email') or '').strip()
+            telephone = (first.get('telephone') or '').strip()
+            is_insp   = 1 if int(first.get('is_inspecteur') or 0) else 0
+            existing = db.execute("SELECT id FROM formateurs WHERE nom = ? AND prenom = ? AND etat = ?",
+                                  (nom, prenom, etat)).fetchone()
+            if existing:
+                f_id = existing['id']
+                db.execute("UPDATE formateurs SET email = ?, telephone = ?, is_inspecteur = ?, updated_at = datetime('now') WHERE id = ?",
+                           (email, telephone, is_insp, f_id))
+                # REMPLACER compétences et formations
+                db.execute("DELETE FROM formateur_competences WHERE formateur_id = ?", (f_id,))
+                db.execute("DELETE FROM formateur_formations WHERE formateur_id = ?", (f_id,))
+                upd_count += 1
+            else:
+                ref = generate_formateur_reference(db)
+                cur = db.execute("INSERT INTO formateurs (reference, nom, prenom, etat, email, telephone, is_inspecteur) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                                 (ref, nom, prenom, etat, email, telephone, is_insp))
+                f_id = cur.lastrowid
+                if not f_id:
+                    row = db.execute("SELECT id FROM formateurs WHERE reference = ?", (ref,)).fetchone()
+                    f_id = row['id'] if row else None
+                new_count += 1
+            if not f_id:
+                continue
+            # Insérer compétences et formations depuis toutes les lignes du groupe
+            seen_comp = set()
+            seen_del  = set()
+            seen_dev  = set()
+            for r in grp:
+                type_comp = (r.get('type_competence') or '').strip()
+                comp_dom  = (r.get('comp_domaine') or '').strip()
+                f_del     = (r.get('f_delivrees') or '').strip()
+                f_dev     = (r.get('f_developpees') or '').strip()
+                if type_comp:
+                    ckey = (type_comp.upper(), comp_dom.upper())
+                    if ckey not in seen_comp:
+                        seen_comp.add(ckey)
+                        db.execute("INSERT INTO formateur_competences (formateur_id, type_competence, domaine) VALUES (?, ?, ?)",
+                                   (f_id, type_comp, comp_dom or None))
+                for desc in [s.strip() for s in f_del.split(';') if s.strip()]:
+                    if desc.upper() not in seen_del:
+                        seen_del.add(desc.upper())
+                        db.execute("INSERT INTO formateur_formations (formateur_id, type, description) VALUES (?, 'delivree', ?)", (f_id, desc))
+                for desc in [s.strip() for s in f_dev.split(';') if s.strip()]:
+                    if desc.upper() not in seen_dev:
+                        seen_dev.add(desc.upper())
+                        db.execute("INSERT INTO formateur_formations (formateur_id, type, description) VALUES (?, 'developpee', ?)", (f_id, desc))
+        log_activity(db, request.user['id'], 'IMPORT_FORMATEURS', f"Import: {new_count} nouveaux, {upd_count} maj, {skip_count} doublons ignorés")
+        db.commit()
+        return jsonify({'message': f'{new_count} nouveau(x), {upd_count} mise(s) à jour, {skip_count} doublon(s) ignoré(s)'})
+    except Exception as e:
+        if db:
+            try: db.rollback()
+            except Exception: pass
+        return jsonify({'error': f"Erreur : {str(e)}"}), 400
+    finally:
+        if db:
+            try: db.close()
+            except Exception: pass
 
 @app.route('/api/formateurs/import', methods=['POST'])
 @auth_required
@@ -2663,6 +3120,7 @@ def import_formateurs():
     file = request.files.get('file')
     if not file:
         return jsonify({'error': 'Fichier requis'}), 400
+    db = None
     try:
         wb = openpyxl.load_workbook(file)
         ws = wb.active
@@ -2691,9 +3149,12 @@ def import_formateurs():
                            (email, telephone, is_insp, f_id))
             else:
                 ref = generate_formateur_reference(db)
-                db.execute("INSERT INTO formateurs (reference, nom, prenom, etat, email, telephone, is_inspecteur) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                cur = db.execute("INSERT INTO formateurs (reference, nom, prenom, etat, email, telephone, is_inspecteur) VALUES (?, ?, ?, ?, ?, ?, ?)",
                            (ref, nom, prenom, etat, email, telephone, is_insp))
-                f_id = db.lastrowid
+                f_id = cur.lastrowid
+                if not f_id:
+                    row = db.execute("SELECT id FROM formateurs WHERE reference = ?", (ref,)).fetchone()
+                    f_id = row['id'] if row else None
                 count += 1
             if type_competence:
                 db.execute("INSERT INTO formateur_competences (formateur_id, type_competence, domaine) VALUES (?, ?, ?)",
@@ -2704,10 +3165,16 @@ def import_formateurs():
                 db.execute("INSERT INTO formateur_formations (formateur_id, type, description) VALUES (?, 'developpee', ?)", (f_id, desc))
         log_activity(db, request.user['id'], 'IMPORT_FORMATEURS', f"Import Excel: {count} nouveaux formateurs")
         db.commit()
-        db.close()
         return jsonify({'message': f'{count} formateur(s) importé(s) avec succès'})
     except Exception as e:
+        if db:
+            try: db.rollback()
+            except Exception: pass
         return jsonify({'error': f"Erreur d'import: {str(e)}"}), 400
+    finally:
+        if db:
+            try: db.close()
+            except Exception: pass
 
 
 # Initialize database on import (for gunicorn) and on direct run

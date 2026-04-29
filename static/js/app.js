@@ -825,7 +825,100 @@ async function createUserForInspector(id, email, hasUser) {
   } catch (err) { showMessage(err.message, 'error'); }
 }
 async function activateInspector(id) { if (!confirm('Voulez-vous vraiment r\u00e9activer cet inspecteur ?')) return; try { await api(`/inspectors/${id}/activate`, { method: 'PUT' }); showMessage('Inspecteur r\u00e9activ\u00e9'); reloadKeepScroll(reloadInspectors); } catch (err) { showMessage(err.message, 'error'); } }
-async function importInspectors(input) { if (!input.files[0]) return; const formData = new FormData(); formData.append('file', input.files[0]); try { const res = await fetch('/api/inspectors/import', { method: 'POST', headers: { 'Authorization': `Bearer ${state.token}` }, body: formData }); const data = await res.json(); if (!res.ok) throw new Error(data.error); showMessage(data.message); reloadKeepScroll(reloadInspectors); } catch (err) { showMessage(err.message, 'error'); } input.value = ''; }
+async function importInspectors(input) { if (!input.files[0]) return; await _importPreview('inspectors', input.files[0]); input.value = ''; }
+async function _importPreview(kind, file) {
+  const formData = new FormData(); formData.append('file', file);
+  const previewUrl = kind === 'formateurs' ? '/api/formateurs/import-preview' : '/api/inspectors/import-preview';
+  const applyUrl   = kind === 'formateurs' ? '/api/formateurs/import-apply'   : '/api/inspectors/import-apply';
+  const onSuccess  = kind === 'formateurs' ? (m)=>{ showFrmMsg(m); reloadKeepScroll(reloadFormateurs); } : (m)=>{ showMessage(m); reloadKeepScroll(reloadInspectors); };
+  const onErr      = kind === 'formateurs' ? (m)=>showFrmMsg(m,'error') : (m)=>showMessage(m,'error');
+  try {
+    const res = await fetch(previewUrl, { method: 'POST', headers: { 'Authorization': `Bearer ${state.token}` }, body: formData });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Erreur');
+    if (!data.rows || data.rows.length === 0) { onErr('Aucune ligne valide trouvée dans le fichier'); return; }
+    _showImportPreviewModal(kind, data, applyUrl, onSuccess, onErr);
+  } catch (err) { onErr('Erreur de prévisualisation : ' + err.message); }
+}
+function _showImportPreviewModal(kind, data, applyUrl, onSuccess, onErr) {
+  const colorOf = s => s === 'new' ? '#bbf7d0' : (s === 'duplicate' ? '#fecaca' : (s === 'update' ? '#fed7aa' : '#fff'));
+  const labelOf = s => s === 'new' ? 'Nouveau' : (s === 'duplicate' ? 'Doublon' : (s === 'update' ? 'Mise à jour' : ''));
+  const isInsp = kind !== 'formateurs';
+  const headers = isInsp
+    ? ['Nom','Prénom','État','Email','Téléphone','Domaine','Spécialité','Niveau']
+    : ['Nom','Prénom','État','Email','Téléphone','Insp.','Compétence'];
+  const fieldKeys = isInsp
+    ? ['nom','prenom','etat','email','telephone','domaine','specialite','niveau']
+    : ['nom','prenom','etat','email','telephone','is_inspecteur','type_competence'];
+  const rowsHtml = data.rows.map((r, i) => `
+    <tr style="background:${colorOf(r.status)}">
+      <td><input type="checkbox" class="imp-row-cb" data-i="${i}" ${r.status === 'duplicate' ? '' : 'checked'}></td>
+      <td><strong style="font-size:0.75rem">${labelOf(r.status)}</strong></td>
+      ${fieldKeys.map(k => `<td><small>${esc(String(r[k] !== undefined && r[k] !== null ? r[k] : ''))}</small></td>`).join('')}
+      <td><small style="color:#4a5568;font-style:italic">${esc(r.note || '')}</small></td>
+    </tr>
+  `).join('');
+  openModal(`
+    <div class="modal-header"><h3>Prévisualisation de l'importation</h3><button class="btn-close" onclick="closeModal()">&times;</button></div>
+    <div class="modal-body">
+      <div style="display:flex;gap:0.5rem;flex-wrap:wrap;padding-bottom:0.75rem;margin-bottom:0.75rem;border-bottom:1px solid #e2e8f0">
+        <button type="button" class="btn btn-outline btn-sm" onclick="closeModal()">Annuler l'importation</button>
+        <button type="button" class="btn btn-sm" onclick="_removeUncheckedImpRows()" style="background:#dc2626;color:white">Supprimer les lignes décochées</button>
+        <button type="button" class="btn btn-primary btn-sm" id="imp-apply-btn" onclick="_applyImport()">Valider l'importation</button>
+      </div>
+      <div style="display:flex;gap:0.75rem;margin-bottom:1rem;flex-wrap:wrap">
+        <span style="background:#bbf7d0;padding:4px 10px;border-radius:4px;font-size:0.875rem"><strong>${data.counts.new || 0}</strong> nouveau(x)</span>
+        <span style="background:#fed7aa;padding:4px 10px;border-radius:4px;font-size:0.875rem"><strong>${data.counts.update || 0}</strong> mise(s) à jour</span>
+        <span style="background:#fecaca;padding:4px 10px;border-radius:4px;font-size:0.875rem"><strong>${data.counts.duplicate || 0}</strong> doublon(s) — ignorés à la validation</span>
+        <span style="margin-left:auto;color:#4a5568;font-size:0.875rem">${data.total} ligne(s) au total</span>
+      </div>
+      <div style="margin-bottom:0.5rem;font-size:0.875rem"><label style="display:inline-flex;align-items:center;gap:0.35rem;cursor:pointer"><input type="checkbox" id="imp-toggle-all" onchange="document.querySelectorAll('.imp-row-cb').forEach(cb=>cb.checked=this.checked)"> Tout cocher / décocher</label> &nbsp;|&nbsp; Identification des doublons : <strong>Nom + Prénom + État</strong></div>
+      <div class="table-container" style="max-height:55vh;overflow:auto">
+        <table class="data-table">
+          <thead><tr><th style="width:30px"></th><th>Statut</th>${headers.map(h => `<th>${h}</th>`).join('')}<th>Note</th></tr></thead>
+          <tbody>${rowsHtml}</tbody>
+        </table>
+      </div>
+      <div id="imp-error" style="margin-top:0.5rem"></div>
+    </div>
+  `, 'modal-xl');
+  // stocker rows + handlers pour _applyImport
+  window._impRows = data.rows;
+  window._impApplyUrl = applyUrl;
+  window._impOnSuccess = onSuccess;
+  window._impOnErr = onErr;
+}
+function _removeUncheckedImpRows() {
+  const keepIdx = new Set([...document.querySelectorAll('.imp-row-cb:checked')].map(cb => parseInt(cb.dataset.i)));
+  if (keepIdx.size === window._impRows.length) {
+    document.getElementById('imp-error').innerHTML = '<div class="alert alert-info" style="background:#dbeafe;color:#1e40af;padding:0.5rem;border-radius:4px">Aucune ligne décochée à supprimer</div>';
+    return;
+  }
+  document.querySelectorAll('.imp-row-cb').forEach(cb => {
+    if (!keepIdx.has(parseInt(cb.dataset.i))) {
+      cb.closest('tr').remove();
+    }
+  });
+  document.getElementById('imp-error').innerHTML = `<div class="alert alert-info" style="background:#dbeafe;color:#1e40af;padding:0.5rem;border-radius:4px">${window._impRows.length - keepIdx.size} ligne(s) supprimée(s) de la prévisualisation</div>`;
+}
+async function _applyImport() {
+  const applyUrl = window._impApplyUrl;
+  const checked = [...document.querySelectorAll('.imp-row-cb:checked')].map(cb => parseInt(cb.dataset.i));
+  if (checked.length === 0) {
+    document.getElementById('imp-error').innerHTML = '<div class="alert alert-error">Aucune ligne sélectionnée</div>';
+    return;
+  }
+  const rows = checked.map(i => window._impRows[i]);
+  const btn = document.getElementById('imp-apply-btn'); btn.disabled = true; btn.textContent = 'Importation...';
+  try {
+    const data = await api(applyUrl.replace('/api',''), { method: 'POST', body: JSON.stringify({ rows }) });
+    closeModal();
+    window._impOnSuccess(data.message);
+  } catch (err) {
+    document.getElementById('imp-error').innerHTML = `<div class="alert alert-error">${err.message}</div>`;
+    btn.disabled = false; btn.textContent = "Valider l'importation";
+  }
+}
 
 // ===== INSPECTOR MULTI-SELECT =====
 function toggleAllInspectors(checked) { document.querySelectorAll('.insp-check').forEach(cb => cb.checked = checked); updateInspDeleteBtn(); }
@@ -1357,6 +1450,7 @@ function renderFormateursContent() {
             ${state.user?.role === 'Administrateur' ? `<div style="border-top:1px solid #e2e8f0;margin:0.25rem 0"></div><button onclick="downloadImportTemplate('formateurs')" class="export-item"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3182ce" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span>Modèle d'import</span><small>.xlsx</small></button>` : ''}
           </div>
         </div>
+        ${state.user?.role === 'Administrateur' ? `<button class="btn btn-outline btn-sm" title="Identifier les inspecteurs qui sont aussi formateurs" onclick="openLinkInspectorsModal()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg> Vérifier liens</button>` : ''}
         ${state.user?.role === 'Administrateur' ? `<button class="btn btn-outline btn-sm" onclick="document.getElementById('import-frm-file').click()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> Importer Excel</button><input type="file" id="import-frm-file" accept=".xlsx" style="display:none" onchange="importFormateurs(this)">` : ''}
         ${canDeactivate ? `<button class="btn btn-sm" id="frm-delete-btn" style="background:#dc2626;color:white;display:none" onclick="bulkDeleteFormateurs()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-2 14H7L5 6"/></svg> Supprimer</button>` : ''}
         ${canAdd ? `<button class="btn btn-primary btn-sm" onclick="openFormateurForm()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Formateur</button>` : ''}
@@ -1624,14 +1718,74 @@ async function exportFormateursFile(format) {
   }
 }
 
+async function openLinkInspectorsModal() {
+  try {
+    const data = await api('/formateurs/unlinked-matches');
+    const matches = data.matches || [];
+    if (matches.length === 0) {
+      showFrmMsg('Aucune correspondance non liée trouvée. Tous les formateurs concernés sont déjà liés à un inspecteur.');
+      return;
+    }
+    const rows = matches.map((m, i) => {
+      const emailDiff = m.i_email && m.f_email && m.i_email.toLowerCase().trim() !== m.f_email.toLowerCase().trim();
+      const reasonBadge = m.reason === 'flag_missing'
+        ? '<span style="background:#fef3c7;color:#92400e;padding:2px 6px;border-radius:3px;font-size:0.75rem">Lié – flag manquant</span>'
+        : '<span style="background:#dbeafe;color:#1e40af;padding:2px 6px;border-radius:3px;font-size:0.75rem">À lier</span>';
+      return `<tr>
+        <td><input type="checkbox" class="link-match-cb" data-i="${m.inspector_id}" data-f="${m.formateur_id}" checked></td>
+        <td>${esc(m.nom)} ${esc(m.prenom)}</td>
+        <td>${esc(m.etat)}</td>
+        <td>${reasonBadge}</td>
+        <td><small style="color:#4a5568">${esc(m.inspector_ref)}</small></td>
+        <td><small style="color:#4a5568">${esc(m.formateur_ref)}</small></td>
+        <td>${emailDiff ? `<small style="color:#dc2626" title="Emails différents">⚠ ${esc(m.i_email||'')} ≠ ${esc(m.f_email||'')}</small>` : `<small style="color:#38a169">✓</small>`}</td>
+      </tr>`;
+    }).join('');
+    openModal(`
+      <div class="modal-header"><h3>Vérification des correspondances Inspecteur ↔ Formateur</h3><button class="btn-close" onclick="closeModal()">&times;</button></div>
+      <div class="modal-body">
+        <p style="color:#4a5568;font-size:0.9rem;margin-bottom:1rem">${matches.length} enregistrement(s) à valider : formateurs sans lien <em>+</em> formateurs liés mais marqués Inspecteur = Non. Décochez ceux à ne pas traiter. Les enregistrements validés auront <strong>Inspecteur = Oui</strong>.</p>
+        <div style="margin-bottom:0.5rem"><label style="display:inline-flex;align-items:center;gap:0.35rem;cursor:pointer;font-size:0.875rem"><input type="checkbox" id="link-toggle-all" checked onchange="document.querySelectorAll('.link-match-cb').forEach(cb=>cb.checked=this.checked)"> Tout sélectionner</label></div>
+        <div class="table-container">
+          <table class="data-table">
+            <thead><tr><th style="width:30px"></th><th>Nom et Prénom</th><th>État</th><th>Type</th><th>Inspecteur</th><th>Formateur</th><th>Emails</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+        <div id="link-match-error"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline" onclick="closeModal()">Annuler</button>
+        <button type="button" class="btn btn-primary" id="link-match-submit" onclick="submitLinkMatches()">Valider les liens sélectionnés</button>
+      </div>
+    `, 'modal-lg');
+  } catch (err) { showFrmMsg(err.message, 'error'); }
+}
+
+async function submitLinkMatches() {
+  const pairs = [...document.querySelectorAll('.link-match-cb:checked')].map(cb => ({
+    inspector_id: parseInt(cb.dataset.i),
+    formateur_id: parseInt(cb.dataset.f)
+  }));
+  if (pairs.length === 0) {
+    document.getElementById('link-match-error').innerHTML = '<div class="alert alert-error">Aucune correspondance sélectionnée</div>';
+    return;
+  }
+  const btn = document.getElementById('link-match-submit'); btn.disabled = true; btn.textContent = 'Liaison en cours...';
+  try {
+    const data = await api('/formateurs/bulk-link', { method: 'POST', body: JSON.stringify({ pairs }) });
+    closeModal();
+    showFrmMsg(data.message);
+    reloadKeepScroll(reloadFormateurs);
+  } catch (err) {
+    document.getElementById('link-match-error').innerHTML = `<div class="alert alert-error">${err.message}</div>`;
+    btn.disabled = false; btn.textContent = 'Valider les liens sélectionnés';
+  }
+}
+
 async function importFormateurs(input) {
   if (!input.files[0]) return;
-  const formData = new FormData(); formData.append('file', input.files[0]);
-  try {
-    const res = await fetch('/api/formateurs/import', { method: 'POST', headers: { 'Authorization': `Bearer ${state.token}` }, body: formData });
-    const data = await res.json(); if (!res.ok) throw new Error(data.error);
-    showFrmMsg(data.message); reloadKeepScroll(reloadFormateurs);
-  } catch (err) { showFrmMsg(err.message, 'error'); }
+  await _importPreview('formateurs', input.files[0]);
   input.value = '';
 }
 

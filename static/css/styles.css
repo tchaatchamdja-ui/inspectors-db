@@ -668,6 +668,7 @@ textarea {
   animation: modalSlide 0.25s ease;
 }
 .modal-lg { max-width: 720px; }
+.modal-xl { max-width: 95vw; width: fit-content; min-width: 720px; }
 
 @keyframes modalSlide { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 
